@@ -197,7 +197,7 @@ class DataAnalytics:
 analytics = DataAnalytics()
 
 st.set_page_config(page_title="AI Data Analytics", layout="wide")
-st.title(f"📊 AI Data Analytics Dashboard - {config.domain.title()}")
+st.title("📊 AI Data Analytics Dashboard")
 
 # Sidebar for navigation
 st.sidebar.header("📈 Analytics Options")
