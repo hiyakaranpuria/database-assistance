@@ -1,0 +1,47 @@
+{
+  "database_name": "ai_test_db",
+  "export_date": "2026-01-29T17:28:00",
+  "total_documents": 17482,
+  "collections": {
+    "customers": {
+      "document_count": 1000,
+      "description": "Customer information including name, email, city, and registration date"
+    },
+    "products": {
+      "document_count": 264,
+      "description": "Product catalog with names, prices, categories, and stock levels"
+    },
+    "orders": {
+      "document_count": 5000,
+      "description": "Order transactions with customer, product, amount, and status"
+    },
+    "categories": {
+      "document_count": 5,
+      "description": "Product categories (Electronics, Clothing, Furniture, Books, Groceries)"
+    },
+    "users": {
+      "document_count": 200,
+      "description": "System users with roles (admin, staff, manager)"
+    },
+    "payments": {
+      "document_count": 3500,
+      "description": "Payment records with methods (card, upi, netbanking, cod)"
+    },
+    "reviews": {
+      "document_count": 1200,
+      "description": "Product reviews with ratings and comments"
+    },
+    "chat_history": {
+      "document_count": 13,
+      "description": "Chat conversation history from the analytics interface"
+    }
+  },
+  "sample_queries": [
+    "Show total sales for 2024",
+    "Compare 2023 vs 2024 sales",
+    "Which products perform worst?",
+    "Show monthly sales trends",
+    "Top 10 customers by spending",
+    "Sales breakdown by city"
+  ]
+}

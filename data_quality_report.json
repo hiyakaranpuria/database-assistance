@@ -1,0 +1,80 @@
+{
+  "chat_history": {
+    "stats": {
+      "total_records": 13,
+      "total_fields": 5,
+      "issues_found": 0
+    },
+    "issues": []
+  },
+  "products": {
+    "stats": {
+      "total_records": 300,
+      "total_fields": 6,
+      "issues_found": 1
+    },
+    "issues": [
+      {
+        "type": "duplicates",
+        "field": "name",
+        "count": 69,
+        "examples": {
+          "Material": 3,
+          "Level": 3,
+          "Right": 3
+        },
+        "severity": "high"
+      }
+    ]
+  },
+  "reviews": {
+    "stats": {
+      "total_records": 1000,
+      "total_fields": 5,
+      "issues_found": 0
+    },
+    "issues": []
+  },
+  "payments": {
+    "stats": {
+      "total_records": 1000,
+      "total_fields": 6,
+      "issues_found": 1
+    },
+    "issues": [
+      {
+        "type": "statistical_outliers",
+        "field": "amount",
+        "count": 25,
+        "percentage": 2.5,
+        "range": "-8114.62 to 21876.38",
+        "examples": [
+          24350,
+          23545,
+          24995
+        ],
+        "severity": "low"
+      }
+    ]
+  },
+  "users": {
+    "stats": {
+      "total_records": 200,
+      "total_fields": 5,
+      "issues_found": 0
+    },
+    "issues": []
+  },
+  "orders": {
+    "stats": {
+      "total_records": 1000,
+      "total_fields": 7,
+      "issues_found": 3
+    },
+    "issues": [
+      {
+        "type": "duplicates",
+        "field": "customerId",
+        "count": 660,
+        "examples": {
+          

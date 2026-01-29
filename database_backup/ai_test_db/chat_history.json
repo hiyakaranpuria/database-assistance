@@ -1,0 +1,93 @@
+[
+  {
+    "_id": "697b3e6c3202e4a99eb65177",
+    "session_id": "default",
+    "role": "user",
+    "content": "show total sales for 2024",
+    "timestamp": "2026-01-29 11:03:08.950000"
+  },
+  {
+    "_id": "697b3f21dc2d4eebda4e5b76",
+    "session_id": "default",
+    "role": "user",
+    "content": "show total sales for 2024",
+    "timestamp": "2026-01-29 11:06:09.770000"
+  },
+  {
+    "_id": "697b3f21dc2d4eebda4e5b77",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "The total sales amount is $5,496,784.00",
+    "timestamp": "2026-01-29 11:06:09.915000"
+  },
+  {
+    "_id": "697b3f5adc2d4eebda4e5b78",
+    "session_id": "default",
+    "role": "user",
+    "content": "show me customer table data",
+    "timestamp": "2026-01-29 11:07:06.071000"
+  },
+  {
+    "_id": "697b3f5adc2d4eebda4e5b79",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "The total sales amount is $5,496,784.00",
+    "timestamp": "2026-01-29 11:07:06.102000"
+  },
+  {
+    "_id": "697b3f6cdc2d4eebda4e5b7a",
+    "session_id": "default",
+    "role": "user",
+    "content": "\"How many orders do we have?\"",
+    "timestamp": "2026-01-29 11:07:24.544000"
+  },
+  {
+    "_id": "697b3f6cdc2d4eebda4e5b7b",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "The total sales amount is $5,496,784.00",
+    "timestamp": "2026-01-29 11:07:24.579000"
+  },
+  {
+    "_id": "697b3fdbdc2d4eebda4e5b7f",
+    "session_id": "default",
+    "role": "user",
+    "content": "\"Show me customer table data\" ",
+    "timestamp": "2026-01-29 11:09:15.821000"
+  },
+  {
+    "_id": "697b3fdbdc2d4eebda4e5b80",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "Here are some customers from our database:\n\n1. **Sarah Morris** - psingh@example.com (Udaipur)\n2. **Tammy Yang** - francisthomas@example.org (Mumbai)\n3. **Andrew Mendoza** - VARNOLD@EXAMPLE.ORG  (Delhi)\n4. **Donna Brown** - fosterjulie@example.net (Jaipur)\n5. **Kayla Fisher** - laurenmiller@example.com (Jaipur)\n",
+    "timestamp": "2026-01-29 11:09:15.873000"
+  },
+  {
+    "_id": "697b3fefdc2d4eebda4e5b81",
+    "session_id": "default",
+    "role": "user",
+    "content": "\"How many orders do we have?\"",
+    "timestamp": "2026-01-29 11:09:35.874000"
+  },
+  {
+    "_id": "697b3fefdc2d4eebda4e5b82",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "Here's what I found: [{'_id': ObjectId('697b3efa33367a7af5151e69'), 'name': 'Sarah Morris', 'email': 'psingh@example.com', 'city': 'Udaipur', 'createdAt': datetime.datetime(2024, 11, 19, 20, 33, 51)}, {'_id': ObjectId('697b3efa33367a7af5151e6a'), 'name': 'Tammy Yang', 'email': 'francisthomas@example.org', 'city': 'Mumbai', 'createdAt': datetime.datetime(2025, 4, 19, 2, 23, 23)}, {'_id': ObjectId('697b3efa33367a7af5151e6b'), 'name': 'Andrew Mendoza', 'email': 'VARNOLD@EXAMPLE.ORG ', 'city': 'Delhi', 'createdAt': datetime.datetime(2024, 4, 12, 21, 52, 13)}, {'_id': ObjectId('697b3efa33367a7af5151e6c'), 'name': 'Donna Brown', 'email': 'fosterjulie@example.net', 'city': 'Jaipur', 'createdAt': datetime.datetime(2023, 2, 23, 13, 46, 46)}, {'_id': ObjectId('697b3efa33367a7af5151e6d'), 'name': 'Kayla Fisher', 'email': 'laurenmiller@example.com', 'city': 'Jaipur', 'createdAt': datetime.datetime(2024, 5, 23, 23, 54, 11)}, {'_id': ObjectId('697b3efa33367a7af5151e6e'), 'name': 'Nicholas Johnston', 'email': 'johnsonjuan@example.com', 'city': 'Mumbai', 'createdAt': datetime.datetime(2023, 7, 1, 3, 35)}, {'_id': ObjectId('697b3efa33367a7af5151e6f'), 'name': 'Cheryl Curtis', 'email': 'CARTERJENNIFER@EXAMPLE.NET ', 'city': 'Mumbai', 'createdAt': datetime.datetime(2025, 5, 17, 6, 39, 2)}, {'_id': ObjectId('697b3efa33367a7af5151e70'), 'name': 'April Holt', 'email': 'gbarrett@example.com', 'city': 'Jaipur', 'createdAt': datetime.datetime(2024, 11, 9, 4, 45, 6)}, {'_id': ObjectId('697b3efa33367a7af5151e71'), 'name': 'John Woods', 'email': 'cparker@example.net', 'city': 'Jaipur', 'createdAt': datetime.datetime(2025, 1, 5, 1, 40, 32)}, {'_id': ObjectId('697b3efa33367a7af5151e72'), 'name': 'Maureen Welch', 'email': 'VWOODS@EXAMPLE.ORG ', 'city': 'Delhi', 'createdAt': datetime.datetime(2025, 11, 10, 17, 35, 58)}]",
+    "timestamp": "2026-01-29 11:09:35.896000"
+  },
+  {
+    "_id": "697b4009dc2d4eebda4e5b83",
+    "session_id": "default",
+    "role": "user",
+    "content": "\"Show me products\"",
+    "timestamp": "2026-01-29 11:10:01.368000"
+  },
+  {
+    "_id": "697b4009dc2d4eebda4e5b84",
+    "session_id": "default",
+    "role": "assistant",
+    "content": "Here are some products:\n\n1. **Sarah Morris** - $0 (Stock: 0)\n2. **Tammy Yang** - $0 (Stock: 0)\n3. **Andrew Mendoza** - $0 (Stock: 0)\n4. **Donna Brown** - $0 (Stock: 0)\n5. **Kayla Fisher** - $0 (Stock: 0)\n",
+    "timestamp": "2026-01-29 11:10:01.413000"
+  }
+]

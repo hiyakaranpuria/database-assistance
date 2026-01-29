@@ -1,0 +1,27 @@
+# Minimal Requirements - Core Functionality Only
+# Use this for basic installation: pip install -r requirements-minimal.txt
+
+# Core Web Framework
+streamlit>=1.28.0
+
+# Database Connectivity
+pymongo>=4.5.0
+
+# Data Analysis and Manipulation
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Data Visualization
+plotly>=5.15.0
+
+# Statistical Analysis
+scipy>=1.10.0
+
+# Environment Management
+python-dotenv>=1.0.0
+
+# Fake Data Generation (for sample data)
+faker>=19.0.0
+
+# Date and Time Utilities
+python-dateutil>=2.8.0
