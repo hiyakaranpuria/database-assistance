@@ -323,7 +323,11 @@ elif analysis_type == "Monthly Trends":
     
     # Year selector
     available_years = analytics.get_yearly_sales_comparison()['year'].tolist()
-    selected_year = st.selectbox("Select Year", available_years, index=-1 if available_years else 0)
+    if available_years:
+        selected_year = st.selectbox("Select Year", available_years, index=len(available_years)-1)
+    else:
+        st.warning("No data available for yearly analysis")
+        selected_year = None
     
     if selected_year:
         monthly_data = analytics.get_monthly_trends(selected_year)

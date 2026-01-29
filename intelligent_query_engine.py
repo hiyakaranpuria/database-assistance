@@ -190,10 +190,10 @@ class IntelligentQueryEngine:
         if any(phrase in question for phrase in ['lifetime value', 'ltv', 'customer value']):
             return 'ltv_analysis'
         
-        if any(phrase in question for phrase in ['trending', 'growing', 'declining']):
+        if any(phrase in question for phrase in ['trending', 'growing', 'declining', 'trend', 'trends']):
             return 'trend_analysis'
         
-        if any(phrase in question for phrase in ['seasonal', 'monthly pattern', 'by month']):
+        if any(phrase in question for phrase in ['seasonal', 'monthly pattern', 'by month', 'monthly trends', 'monthly', 'month by month']):
             return 'seasonal_analysis'
         
         if any(phrase in question for phrase in ['compare', 'vs', 'versus', 'against']):
@@ -543,6 +543,179 @@ class IntelligentQueryEngine:
             },
             {"$sort": {"year": 1, "month": 1}}
         ]
+        
+        return json.dumps(pipeline, default=str), "orders"
+    
+    def _generate_ltv_query(self, entities, time_filter):
+        """Generate customer lifetime value query"""
+        pipeline = [
+            {
+                "$group": {
+                    "_id": "$customerId",
+                    "totalSpent": {"$sum": "$amount"},
+                    "orderCount": {"$sum": 1},
+                    "firstOrder": {"$min": "$orderDate"},
+                    "lastOrder": {"$max": "$orderDate"}
+                }
+            },
+            {
+                "$lookup": {
+                    "from": "customers",
+                    "localField": "_id",
+                    "foreignField": "_id",
+                    "as": "customer"
+                }
+            },
+            {"$unwind": "$customer"},
+            {
+                "$project": {
+                    "customerName": "$customer.name",
+                    "customerCity": "$customer.city",
+                    "totalSpent": 1,
+                    "orderCount": 1,
+                    "avgOrderValue": {"$divide": ["$totalSpent", "$orderCount"]},
+                    "customerLifespanDays": {
+                        "$divide": [
+                            {"$subtract": ["$lastOrder", "$firstOrder"]},
+                            86400000
+                        ]
+                    }
+                }
+            },
+            {"$sort": {"totalSpent": -1}},
+            {"$limit": 20}
+        ]
+        
+        return json.dumps(pipeline, default=str), "orders"
+    
+    def _generate_trend_query(self, entities, time_filter):
+        """Generate trend analysis query"""
+        pipeline = [
+            {
+                "$match": {
+                    "status": "completed",
+                    "orderDate": {
+                        "$gte": datetime.now() - timedelta(days=365)
+                    }
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "year": {"$year": "$orderDate"},
+                        "month": {"$month": "$orderDate"}
+                    },
+                    "totalSales": {"$sum": "$amount"},
+                    "orderCount": {"$sum": 1},
+                    "avgOrderValue": {"$avg": "$amount"}
+                }
+            },
+            {
+                "$project": {
+                    "year": "$_id.year",
+                    "month": "$_id.month",
+                    "totalSales": 1,
+                    "orderCount": 1,
+                    "avgOrderValue": 1,
+                    "period": {
+                        "$concat": [
+                            {"$toString": "$_id.year"},
+                            "-",
+                            {"$toString": "$_id.month"}
+                        ]
+                    }
+                }
+            },
+            {"$sort": {"year": 1, "month": 1}}
+        ]
+        
+        return json.dumps(pipeline, default=str), "orders"
+    
+    def _generate_comparison_query(self, question, entities, time_filter):
+        """Generate comparison analysis query"""
+        # Default comparison by city
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "customers",
+                    "localField": "customerId",
+                    "foreignField": "_id",
+                    "as": "customer"
+                }
+            },
+            {"$unwind": "$customer"},
+            {
+                "$group": {
+                    "_id": "$customer.city",
+                    "totalSales": {"$sum": "$amount"},
+                    "orderCount": {"$sum": 1},
+                    "avgOrderValue": {"$avg": "$amount"},
+                    "customerCount": {"$addToSet": "$customerId"}
+                }
+            },
+            {
+                "$project": {
+                    "city": "$_id",
+                    "totalSales": 1,
+                    "orderCount": 1,
+                    "avgOrderValue": 1,
+                    "customerCount": {"$size": "$customerCount"}
+                }
+            },
+            {"$sort": {"totalSales": -1}}
+        ]
+        
+        if time_filter:
+            match_stage = {"$match": {"status": "completed"}}
+            if 'start' in time_filter:
+                match_stage["$match"]["orderDate"] = {
+                    "$gte": time_filter['start'],
+                    "$lt": time_filter.get('end', datetime.now())
+                }
+            pipeline.insert(0, match_stage)
+        
+        return json.dumps(pipeline, default=str), "orders"
+    
+    def _generate_avg_query(self, entities, time_filter):
+        """Generate average aggregation query"""
+        pipeline = [{"$match": {"status": "completed"}}]
+        
+        # Add time filter
+        if time_filter:
+            pipeline[0]["$match"]["orderDate"] = {
+                "$gte": time_filter['start'],
+                "$lt": time_filter.get('end', datetime.now())
+            }
+        
+        # Add grouping
+        if entities['groupby'] == 'city':
+            pipeline.extend([
+                {
+                    "$lookup": {
+                        "from": "customers",
+                        "localField": "customerId",
+                        "foreignField": "_id",
+                        "as": "customer"
+                    }
+                },
+                {"$unwind": "$customer"},
+                {
+                    "$group": {
+                        "_id": "$customer.city",
+                        "avgOrderValue": {"$avg": "$amount"},
+                        "orderCount": {"$sum": 1}
+                    }
+                },
+                {"$sort": {"avgOrderValue": -1}}
+            ])
+        else:
+            pipeline.append({
+                "$group": {
+                    "_id": None,
+                    "avgOrderValue": {"$avg": "$amount"},
+                    "orderCount": {"$sum": 1}
+                }
+            })
         
         return json.dumps(pipeline, default=str), "orders"
     
