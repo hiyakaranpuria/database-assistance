@@ -59,8 +59,9 @@ class BusinessLogicEngine:
     
     def _get_year_start(self):
         today = datetime.now()
-        return today.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)class
- ConversationContext:
+        return today.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+class ConversationContext:
     def __init__(self):
         self.context_stack = []
         self.current_filters = {}
@@ -163,8 +164,9 @@ class IntelligentQueryEngine:
                 subject = self._extract_subject(last_q)
                 question = question.replace('that', subject)
         
-        return question   
- def _extract_subject(self, question):
+        return question
+    
+    def _extract_subject(self, question):
         """Extract the main subject from a question"""
         if 'product' in question:
             return 'products'
@@ -293,8 +295,9 @@ class IntelligentQueryEngine:
                 entities['filter_field'] = 'city'
                 entities['filter_value'] = city.title()
         
-        return entities    def 
-_extract_time_filter(self, question):
+        return entities
+    
+    def _extract_time_filter(self, question):
         """Extract time filters with intelligent parsing"""
         time_filter = {}
         
@@ -486,8 +489,9 @@ _extract_time_filter(self, question):
                 }
             pipeline.insert(0, match_stage)
         
-        return json.dumps(pipeline, default=str), "orders"    def
- _generate_seasonal_query(self, entities):
+        return json.dumps(pipeline, default=str), "orders"
+    
+    def _generate_seasonal_query(self, entities):
         """Generate seasonal analysis query"""
         pipeline = [
             {
@@ -641,17 +645,6 @@ _extract_time_filter(self, question):
             return json.dumps(pipeline, default=str), "orders"
 
 # Global instance
-intelligent_engine = IntelligentQueryEngine()
-
-def generate_intelligent_query(question):
-    """Main function to generate intelligent queries"""
-    try:
-        query, collection = intelligent_engine.generate_advanced_query(question)
-        return query
-    except Exception as e:
-        # Fallback to simple query
-        return json.dumps([{"$limit": 10}], default=str)# Glob
-al instance
 intelligent_engine = IntelligentQueryEngine()
 
 def generate_intelligent_query(question):
