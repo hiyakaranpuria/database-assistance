@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
 """
-Enhanced Query Engine - Improved natural language processing
+Enhanced Query Engine - Improved natural language processing with Local LLM support
 """
 
 import re
 import json
 from datetime import datetime, timedelta
 from dynamic_query_generator import DynamicQueryGenerator
+
+# Try to import local LLM integration
+try:
+    from llm_integration import generate_llm_query, LLM_AVAILABLE
+    print("✅ Local LLM integration loaded")
+except ImportError:
+    print("⚠️  Local LLM integration not available")
+    LLM_AVAILABLE = False
 
 class DateTimeEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -95,7 +103,18 @@ class EnhancedQueryEngine(DynamicQueryGenerator):
         return any(word in question for word in time_words)
     
     def generate_enhanced_query(self, question):
-        """Generate query with enhanced understanding"""
+        """Generate query with enhanced understanding and LLM support"""
+        
+        # Try local LLM first if available
+        if LLM_AVAILABLE:
+            try:
+                llm_query = generate_llm_query(question, use_multilingual=True)
+                print(f"🤖 Using Local LLM for query generation")
+                return llm_query, "orders" # Return tuple to match expected signature
+            except Exception as e:
+                print(f"⚠️  LLM failed, using fallback: {e}")
+        
+        # Fallback to enhanced rule-based system
         enhanced_question = self.enhance_question(question)
         
         # Handle special business cases
@@ -219,6 +238,14 @@ def generate_enhanced_query(question):
     except Exception as e:
         # Fallback to simple query
         return json.dumps([{"$limit": 10}], cls=DateTimeEncoder)  
+        
+    def generate_narrative(self, question, data):
+        """Generate natural language narrative using LLM"""
+        try:
+            from llm_integration import local_llm
+            return local_llm.synthesize_answer(question, data)
+        except Exception:
+            return None
   
     def _generate_worst_products_query(self):
         """Generate worst performing products query"""

@@ -42,7 +42,7 @@ class DynamicQueryExecutor:
         query_lower = query_str.lower()
         
         # Sales/revenue queries should use orders collection
-        if any(word in question_lower for word in ['sales', 'revenue', 'total sales', 'income']):
+        if any(word in question_lower for word in ['sales', 'selling', 'revenue', 'total sales', 'income', 'orders', 'spending']):
             if 'orders' in self.metadata:
                 return 'orders'
         

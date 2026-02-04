@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import numpy as np
 from metadata_provider import extract_metadata
-from enhanced_query_engine import generate_enhanced_query
+from enhanced_query_engine import generate_enhanced_query, enhanced_engine
 from dynamic_query_executor import execute_mongo_query
 from enhanced_response_formatter import format_enhanced_answer
 from memory_manager import save_message, get_chat_history
@@ -204,7 +204,7 @@ st.sidebar.header("📈 Analytics Options")
 analysis_type = st.sidebar.selectbox(
     "Choose Analysis Type",
     ["Chat Interface", "Sales Comparison", "Monthly Trends", "Product Analysis", 
-     "Customer Insights", "Geographic Analysis", "Custom Query"]
+     "Customer Insights", "Geographic Analysis", "Custom Query", "AI Data Cleaning"]
 )
 
 if analysis_type == "Chat Interface":
@@ -221,7 +221,25 @@ if analysis_type == "Chat Interface":
             field_count = len(info.get('fields', {}))
             st.write(f"- {collection} ({field_count} fields)")
 
-    # Initialize Chat
+        # Documentation Download
+        st.markdown("---")
+        st.header("📚 Documentation")
+        import glob
+        import os
+        pdf_files = glob.glob("Chat_Database_Architecture_*.pdf")
+        if pdf_files:
+            latest_pdf = max(pdf_files, key=os.path.getctime)
+            try:
+                with open(latest_pdf, "rb") as f:
+                    pdf_data = f.read()
+                st.download_button(
+                    label="⬇️ Download Architecture PDF",
+                    data=pdf_data,
+                    file_name="AI_Database_Architecture.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error(f"Could not load PDF: {e}")
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
@@ -245,7 +263,19 @@ if analysis_type == "Chat Interface":
                 raw_results = execute_mongo_query(query_str, user_input)
                 
                 # Format answer using enhanced formatter
-                friendly_answer = format_enhanced_answer(user_input, raw_results)
+                table_view = format_enhanced_answer(user_input, raw_results)
+                
+                # Generate AI Narrative (Synthesis)
+                try:
+                    narrative = enhanced_engine.generate_narrative(user_input, raw_results)
+                except:
+                    narrative = None
+                
+                # Combine Narrative + Table
+                if narrative and "Error" not in narrative:
+                    friendly_answer = f"{narrative}\n\n{table_view}"
+                else:
+                    friendly_answer = table_view
                 
             except Exception as e:
                 friendly_answer = f"Sorry, I encountered an error: {str(e)}"
@@ -521,10 +551,7 @@ elif analysis_type == "Custom Query":
         "Daily Sales Last 30 Days": '''[
     {
         "$match": {
-            "status": "completed",
-            "orderDate": {
-                "$gte": new Date(new Date().setDate(new Date().getDate() - 30))
-            }
+            "status": "completed"
         }
     },
     {
@@ -636,6 +663,60 @@ elif analysis_type == "Custom Query":
                 st.error(f"Query execution failed: {str(e)}")
         else:
             st.warning("Please enter a query to execute.")
+
+
+
+elif analysis_type == "AI Data Cleaning":
+    st.subheader("🧹 AI-Powered Data Cleaning")
+    st.info("The AI Agent will scan your data, identify issues (duplicates, formatting), and clean them automatically.")
+    
+    from database_cleaner_executor import cleaning_executor
+    
+    # 1. Select Collection
+    collections = cleaning_executor.get_collections()
+    selected_collection = st.selectbox("Select Collection to Clean", collections)
+    
+    if "cleaning_plan" not in st.session_state:
+        st.session_state.cleaning_plan = None
+        
+    # 2. Scan Button
+    if st.button("🔍 Scan & Generate Cleaning Plan"):
+        with st.spinner("Analyzing data patterns..."):
+            plan = cleaning_executor.generate_plan(selected_collection)
+            st.session_state.cleaning_plan = plan
+            
+    # 3. Review & Execute
+    if st.session_state.cleaning_plan:
+        plan = st.session_state.cleaning_plan
+        
+        if "error" in plan:
+            st.error(plan["error"])
+        else:
+            st.subheader("📝 Proposed Cleaning Logic")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Sample Data (Before):**")
+                st.json(plan["samples"])
+            with col2:
+                st.write("**Proposed Cleaning Pipeline (JSON):**")
+                st.code(plan["code"], language="python")
+                
+            st.warning("⚠️ This will modify your database directly. Review the code above.")
+            
+            if st.button("🚀 Confirm & Run Cleaning"):
+                with st.spinner("Executing cleaning script..."):
+                    result = cleaning_executor.execute_cleaning(plan["code"], selected_collection)
+                    
+                    if result["success"]:
+                        st.success("✅ Cleaning Complete!")
+                        st.json(result["summary"])
+                        st.session_state.cleaning_plan = None # Reset
+                    else:
+                        st.error(f"❌ Execution Failed: {result.get('error')}")
+                        if "traceback" in result:
+                            with st.expander("Error Details"):
+                                st.code(result["traceback"])
 
 # Example queries sidebar
 st.sidebar.header("💡 Try These Intelligent Queries")
