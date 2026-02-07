@@ -21,7 +21,7 @@ def setup_restaurant_demo():
         f.write("DB_DOMAIN=restaurant\n")
         f.write("DB_NAME=ai_test_db\n")
         f.write("PRIMARY_COLLECTION=orders\n")
-        f.write("GEMINI_API_KEY=AIzaSyADzve_hwBPenApa1klsZuZWQaasGbKlU4\n")
+      
     
     print("✅ Restaurant configuration saved!")
     print("Run: python seed_mongo.py && streamlit run app_dynamic.py")
@@ -34,8 +34,7 @@ def setup_ecommerce_demo():
         f.write("DB_DOMAIN=ecommerce\n")
         f.write("DB_NAME=ecommerce_db\n")
         f.write("PRIMARY_COLLECTION=orders\n")
-        f.write("GEMINI_API_KEY=AIzaSyADzve_hwBPenApa1klsZuZWQaasGbKlU4\n")
-    
+     
     print("✅ E-commerce configuration saved!")
     print("You'll need to create seed data for e-commerce schema")
 
@@ -47,7 +46,6 @@ def setup_finance_demo():
         f.write("DB_DOMAIN=finance\n")
         f.write("DB_NAME=finance_db\n")
         f.write("PRIMARY_COLLECTION=transactions\n")
-        f.write("GEMINI_API_KEY=AIzaSyADzve_hwBPenApa1klsZuZWQaasGbKlU4\n")
     
     print("✅ Finance configuration saved!")
     print("You'll need to create seed data for finance schema")
@@ -69,7 +67,7 @@ def setup_custom():
         f.write(f"DB_NAME={db_name}\n")
         f.write(f"PRIMARY_COLLECTION={primary_collection}\n")
         f.write(f"MONGO_CONNECTION={connection}\n")
-        f.write("GEMINI_API_KEY=AIzaSyADzve_hwBPenApa1klsZuZWQaasGbKlU4\n")
+       
     
     print("✅ Custom configuration saved!")
     print("Make sure your database has data and run: streamlit run app_dynamic.py")
