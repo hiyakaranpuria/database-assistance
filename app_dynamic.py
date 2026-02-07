@@ -265,11 +265,15 @@ if analysis_type == "Chat Interface":
                     raise e
                 
                 # Cache the agent to avoid reloading embeddings per query
+                # But reload if embeddings.pkl changes
+                import os
+                embeddings_mtime = os.path.getmtime('embeddings.pkl') if os.path.exists('embeddings.pkl') else 0
+                
                 @st.cache_resource
-                def get_agent():
+                def get_agent(_cache_key):
                     return MongoDBChatAgent()
                 
-                agent = get_agent()
+                agent = get_agent(embeddings_mtime)
                 
                 friendly_answer = agent.process_query(user_input)
                 

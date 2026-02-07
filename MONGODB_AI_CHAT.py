@@ -233,7 +233,7 @@ class PromptBuilder:
         """Build relevant schema context"""
         relevant_collections = self.search_engine.search_collections(user_question, top_k=top_k_collections)
         
-        if not relevant_collections or relevant_collections[0][1] < 0.3:
+        if not relevant_collections or relevant_collections[0][1] < 0.2:
             return "NO_RELEVANT_COLLECTION"
         
         context = "## Available MongoDB Collections\n\n"
@@ -363,7 +363,7 @@ class LocalLLMInterface:
                 input=full_prompt,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=120
             )
             
             if result.returncode == 0:
@@ -429,7 +429,7 @@ class ResponseFormatter:
 class MongoDBChatAssistant:
     """Main chat interface - handles user queries end-to-end"""
     
-    def __init__(self, mongodb_uri='mongodb://localhost:27017', db_name='ai-test-db'):
+    def __init__(self, mongodb_uri='mongodb://localhost:27017', db_name='ai_test_db'):
         """Initialize the assistant"""
         print("=" * 70)
         print("MongoDB AI Chat Assistant")
@@ -481,11 +481,12 @@ class MongoDBChatAssistant:
             return "❌ Database modification queries are not allowed. You can only view/query data."
         
         # Step 1: Build prompt with relevant schema
-        system_prompt, user_prompt = self.prompt_builder.get_reliable_prompt(user_question)
+        schema_context, relevant_collections = self.prompt_builder.build_context(user_question)
         
-        # Check if question is out of scope
-        if "OUT_OF_SCOPE" in system_prompt or "OUT_OF_SCOPE" in user_prompt:
+        if schema_context == "NO_RELEVANT_COLLECTION":
             return "❌ This question is not related to the database. Please ask something about the data in MongoDB."
+        
+        system_prompt, user_prompt = self.prompt_builder.get_reliable_prompt(user_question)
         
         # Step 2: Get query from Qwen2.5
         print("🤖 Qwen2.5 thinking...", end="", flush=True)
@@ -587,7 +588,7 @@ if __name__ == "__main__":
         # Initialize assistant
         assistant = MongoDBChatAssistant(
             mongodb_uri='mongodb://localhost:27017',
-            db_name='ai-test-db'
+            db_name='ai_test_db'
         )
         
         # Start chat

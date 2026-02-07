@@ -4,6 +4,7 @@ import pickle
 import numpy as np
 import requests  # ✅ FIX 1: Added missing import
 import ast  # ✅ FIX 2: Added missing import
+import re
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 from sentence_transformers import SentenceTransformer
@@ -67,6 +68,14 @@ class MongoDBConnector:
                     "doc_count": doc_count,
                     "indexed_fields": indexes
                 }
+                
+                # ENHANCEMENT: Boost descriptions for known collections to improve matching
+                if 'order' in collection_name.lower():
+                    schema[collection_name]['description'] += ". Contains transaction records, purchases, sales, status (completed/pending), amounts, and order details."
+                elif 'product' in collection_name.lower():
+                    schema[collection_name]['description'] += ". Contains items for sale, inventory, stock, prices, and catalog information."
+                elif 'customer' in collection_name.lower() or 'user' in collection_name.lower():
+                    schema[collection_name]['description'] += ". Contains user profiles, client details, contact info, email, and demographics."
             except Exception as e:
                 print(f"Warning: Could not extract {collection_name}: {e}")
         
@@ -170,6 +179,7 @@ class VectorSearchEngine:
         question_embedding = np.array(question_embedding)
         
         similarities = {}
+        print(f"\nDEBUG: Searching for matches for: '{user_question}'")
         for collection_name, collection_data in self.embeddings_db.items():
             collection_embedding = np.array(collection_data['collection_embedding'])
             norm1 = np.linalg.norm(question_embedding)
@@ -180,7 +190,24 @@ class VectorSearchEngine:
             else:
                 similarity = np.dot(question_embedding, collection_embedding) / (norm1 * norm2)
             
+            # STRONG KEYWORD FALLBACK
+            q_lower = user_question.lower()
+            c_lower = collection_name.lower()
+            
+            # Smart Aliases
+            check_name = c_lower
+            if c_lower == 'customers' and ('user' in q_lower or 'client' in q_lower):
+                # If user asks for 'users', boost 'customers' too because that's where data often is
+                print(f"  -> ALIAS MATCH: 'users' mapped to '{collection_name}'")
+                similarity = max(similarity, 0.75)
+            
+            # Check for plural and singular
+            if c_lower in q_lower or (c_lower.rstrip('s') in q_lower and len(c_lower) > 3):
+                print(f"  -> KEYWORD MATCH FOUND: {collection_name}")
+                similarity = max(similarity, 0.8) # Set very high score
+            
             similarities[collection_name] = similarity
+            print(f"  -> Collection {collection_name}: Score {similarity:.4f}")
         
         top_collections = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:top_k]
         return top_collections
@@ -226,13 +253,20 @@ class PromptBuilder:
         self.search_engine = VectorSearchEngine()
         self.search_engine.embeddings_db = embeddings_db
     
-    def build_context(self, user_question: str, top_k_collections: int = 3) -> str:
+    def build_context(self, user_question: str, top_k_collections: int = 3) -> Tuple[str, List[Tuple]]:
         """Build relevant schema context with LIVE samples"""
         relevant_collections = self.search_engine.search_collections(user_question, top_k=top_k_collections)
         
-        if not relevant_collections or relevant_collections[0][1] < 0.3:
-            return "NO_RELEVANT_COLLECTION"
+        if not relevant_collections or relevant_collections[0][1] < 0.2:
+            return "NO_RELEVANT_COLLECTION", []
         
+        # SMART CONTEXT: If 'orders' is found, ALWAYS include 'customers' to enable joins
+        found_names = [n for n, s in relevant_collections]
+        if 'orders' in found_names and 'customers' not in found_names:
+            relevant_collections.append(('customers', 0.99))
+        if 'customers' in found_names and 'orders' not in found_names:
+             relevant_collections.append(('orders', 0.5))
+
         context = "## Available MongoDB Collections\n\n"
         context += "⚠️ IMPORTANT: Use ONLY the field names shown below. Do NOT invent field names.\n\n"
         
@@ -243,22 +277,17 @@ class PromptBuilder:
             collection_data = self.embeddings_db[collection_name]
             
             context += f"### Collection: `{collection_name}`\n"
-            context += f"Document Count: {collection_data['doc_count']}\n"
-            context += f"\n**ACTUAL Fields (verified from sample document):**\n"
             
-            # Get actual field names and samples dynamically
-            actual_fields = self.db_connector.get_collection_sample_fields(collection_name)
-            
-            if actual_fields:
-                for field_name, field_info in actual_fields.items():
-                    sample_value = field_info['sample']
-                    context += f"  - `{field_name}`: {field_info['type']} (e.g., {sample_value})\n"
-            else:
-                 # Fallback to static schema if dynamic fetch fails
-                 for field_name, field_desc in list(collection_data['fields'].items())[:5]:
-                     context += f"  - `{field_name}`: {field_desc}\n"
+            # SHOW MORE FIELDS!
+            fields_shown = 0
+            for field_name, field_desc in collection_data['fields'].items():
+                if fields_shown >= 20: break # Increased to 20 to avoid missing fields
+                context += f"  - `{field_name}`: {field_desc}\n"
+                fields_shown += 1
             
             context += "\n"
+        
+        return context, relevant_collections
         
         return context
     
@@ -281,21 +310,36 @@ class PromptBuilder:
 6. Do NOT hallucinate - if you can't construct a valid query, say "UNABLE_TO_QUERY"
 7. For simple key-value lookups use: db.collection.find({...})
 8. For SORTING, LIMITING (top N), GROUPING: Use db.collection.aggregate([...])
+   Example: db.products.aggregate([{"$sort":{"price":-1}}, {"$limit":5}]) -- Note: strictly check brackets and quotes!
 9. For counting: Use db.collection.countDocuments({...})
-10. For JOINING data (e.g. Orders + Customers), you MUST use this pattern:
-    [
-      {$match: ...},
-      {$lookup: {from: "customers", localField: "customerId", foreignField: "_id", as: "customer_docs"}},
-      {$unwind: "$customer_docs"},
-      {$project: {
-         _id: 0,
-         order_status: "$status",
-         amount: 1,
-         customer_name: "$customer_docs.name",
-         customer_email: "$customer_docs.email"
-      }}
-    ]
-11. IF user asks for a field (e.g. 'customerName') that is NOT in the collection's schema, you MUST use $lookup -> $unwind -> $project to fetch it.
+    CRITICAL: TRIM regex patterns! Use "udaipur", NOT " udaipur". Never include leading spaces in regex.
+11. **RELATIONAL LOGIC & JOINS (CRITICAL)**:
+    - For text matching (cities, names) inside joins, USE REGEX: `{'customer_docs.city': {'$regex': 'Mumbai', '$options': 'i'}}`. Do NOT use simple equality.
+    - Before writing a query, CHECK THE SCHEMA of the target collection.
+    - If the user asks for a field (e.g. "city", "productName") that DOES NOT exist in the main collection (e.g. "orders"):
+      1. Find the related collection (e.g. "customers", "products").
+      2. Use `$lookup` to join them using the ID fields (e.g. `customerId` -> `_id`).
+    - NEVER assume a field exists if it is not in the schema list above.
+    - NEVER assume a field exists if it is not in the schema list above.
+    - **ORDER MATTERS**: You MUST `$unwind` the joined array **BEFORE** you filter (`$match`) on its fields.
+      - WRONG: `$lookup` -> `$match` -> `$unwind`
+      - CORRECT: `$lookup` -> `$unwind` -> `$match`
+
+14. **LOGIC TRANSLATION (CRITICAL)**:
+    - **"AND" vs "OR"**: If user lists multiple items (e.g. "Mumbai and Udaipur", "Red and Blue"), this implies **OR** logic in database terms.
+    - **Use `$in`**: `{"city": {"$in": ["Mumbai", "Udaipur"]}}` matches EITHER.
+    - **Use Regex OR**: `{"city": {"$regex": "Mumbai|Udaipur", "$options": "i"}}` matches EITHER.
+    - **NEVER** use two separate `$match` regexes for the same field (that creates "must be both", which returns empty).
+
+12. **ANTI-HALLUCINATION RULES**:
+    - The `orders` collection does NOT have `city`, `address`, or `customerAddress`. matching these fields on `orders` will FAIL.
+    - You MUST join to `customers` to filter by location.
+
+13. **FIELD SELECTION & LIMITS (USER RULES)**:
+    - **Default**: If no specific fields are asked, SHOW ALL FIELDS (do not use $project).
+    - **Specific**: If user asks for specific fields (e.g. "show names"), return ONLY those fields.
+    - **Limits**: If user asks for a number (e.g. "show 5"), use `{$limit: 5}`.
+    - **Joins**: If user asks about 2 tables, use `$lookup` and `$unwind` and include fields from BOTH tables.
 
 CRITICAL RULES:
 - NEVER suggest DROP, DELETE, UPDATE, or MODIFY operations
@@ -312,7 +356,9 @@ Return ONLY the MongoDB query code, nothing else."""
 User Question: "{user_question}"
 
 Generate the MongoDB query to answer this question. Use ONLY the collections and fields shown above.
-Return ONLY the query code, no explanation."""
+Return ONLY the full MongoDB query code starting with 'db.', no explanation.
+Example: db.orders.find({...}) or db.orders.aggregate([...])
+"""
         
         return system_prompt, user_prompt
 
@@ -339,14 +385,14 @@ class LocalLLMInterface:
                 "stream": False,
                 "options": {
                     "temperature": temperature,
-                    "num_predict": 120  # Reduced to 120 for faster CPU performance (8GB RAM optimization)
+                    "num_predict": 256  # Optimized for faster generation
                 }
             }
             
             response = requests.post(
                 f"{self.api_url}/api/generate", 
                 json=payload, 
-                timeout=60  # Increased to 60s for slower hardware
+                timeout=180  # Increased to 180s for slower hardware
             )
             
             if response.status_code == 200:
@@ -513,11 +559,12 @@ class MongoDBChatAgent:
                     print(f"Template join failed: {e}, falling back to LLM")
         
         # Build prompt with relevant schema
-        system_prompt, user_prompt = self.prompt_builder.get_reliable_prompt(user_question)
+        schema_context, relevant_collections = self.prompt_builder.build_context(user_question)
         
-        # Check if question is out of scope
-        if "OUT_OF_SCOPE" in system_prompt or "OUT_OF_SCOPE" in user_prompt:
+        if schema_context == "NO_RELEVANT_COLLECTION":
             return "❌ This question is not related to the database. Please ask something about the data in MongoDB."
+        
+        system_prompt, user_prompt = self.prompt_builder.get_reliable_prompt(user_question)
         
         # Get query from Qwen2.5
         query_code = self.llm.generate(system_prompt, user_prompt, temperature=0)
@@ -538,141 +585,169 @@ class MongoDBChatAgent:
         if "OUT_OF_SCOPE" in query_code:
             return "❌ This question is not related to the database."
         
-        # Parse the MongoDB query
+        if "OUT_OF_SCOPE" in query_code:
+            return "❌ This question is not related to the database."
+
+        # FLEXIBLE PARSING LOGIC
         query_code = query_code.strip()
         
-        # Parse collection name and query
+        # 1. Clean Markdown
+        if "```" in query_code:
+            # Extract first code block
+            blocks = re.findall(r'```(?:mongodb|json|python|javascript)?\s*(.*?)\s*```', query_code, re.DOTALL)
+            if blocks:
+                query_code = blocks[0].strip()
+        
         results = []
+        collection_name = "Unknown"
+        
         try:
-            # Regex finds "db.<collection>.<find|aggregate|countDocuments|count>(" matching ignoring leading text
-            import re
-            match = re.search(r'db\.([a-zA-Z0-9_]+)\.(find|aggregate|countDocuments|count)\(', query_code)
+            # 2. Try to find the pattern db.collection.operation(...) or collection.operation(...)
+            # Note: collection name can include - or _ and we look for find, aggregate, countDocuments
+            match = re.search(r'(?:db\.)?([a-zA-Z0-9_\-]+)\.(find|aggregate|countDocuments|count)\s*\(', query_code)
+            
+            collection_name = None
+            operation = None
+            content = ""
             
             if match:
                 collection_name = match.group(1)
                 operation = match.group(2)
-                # Content starts immediately after the opening parenthesis
-                content_after_op = query_code[match.end():]
+                content = query_code[match.end():]
+                # Try to balance parentheses
+                stack = 1
+                end_pos = -1
+                for i, char in enumerate(content):
+                    if char == '(': stack += 1
+                    elif char == ')': stack -= 1
+                    if stack == 0:
+                        end_pos = i
+                        break
+                if end_pos != -1:
+                    content = content[:end_pos]
+            else:
+                # 3. Handle "Naked" output (just the JSON object or array)
+                # Guess collection from relevant_collections
+                if relevant_collections:
+                     collection_name = relevant_collections[0][0]
+                else:
+                     return f"⚠ No relevant collection found for query:\n{query_code}"
                 
-                if operation in ['find', 'countDocuments', 'count']:
-                    # Extract query object {...}
-                    query_dict = {}
-                    if '{' in content_after_op:
-                        start = content_after_op.find('{')
-                        # Heuristic: Find balanced braces or just take the main object
-                        # This simple heuristic grabs the first object passed to find()
-                        # If the LLM generates .find({...}).project({...}), we mainly care about the filter first.
-                        # Advanced parsing would needed for projection.
+                if query_code.startswith('['):
+                    operation = 'aggregate'
+                    content = query_code
+                elif query_code.startswith('{'):
+                    operation = 'find'
+                    content = query_code
+                else:
+                    return f"⚠ Could not identify MongoDB command or valid JSON in response:\n{query_code}"
+
+            # 4. Normalize JSON content
+            # Fix unquoted keys, handle single quotes, etc.
+            # Using a simplified version of the previous logic
+            def clean_json(s):
+                # Replace single quotes with double quotes (carefully)
+                s = s.replace("'", '"')
+                # Add quotes to unquoted keys
+                s = re.sub(r'([{,\s])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', s)
+                
+                # SAFETY FIX: Trim Regex patterns (fixes " udaipur" issue)
+                s = re.sub(r'("\$regex"\s*:\s*)"\s*(\S.*?)\s*"', r'\1"\2"', s)
+                
+                # SAFETY FIX: Fix quoted objects in arrays (fixes "{$limit":10})
+                # Turns "{$limit":10} into {"$limit":10}
+                s = re.sub(r'"\s*(\{[^"]+?\})\s*"', r'\1', s)
+                s = re.sub(r'"\s*(\{\$[^"]+?\})\s*"', r'\1', s)
+                
+                # SAFETY FIX: Auto-close brackets if missing
+                open_sq = s.count('[')
+                close_sq = s.count(']')
+                if open_sq > close_sq:
+                    s += int(open_sq - close_sq) * ']'
+                
+                open_br = s.count('{')
+                close_br = s.count('}')
+                if open_br > close_br:
+                    s += int(open_br - close_br) * '}'
+                
+                return s
+
+            clean_content = clean_json(content)
+            
+            try:
+                data = json.loads(clean_content)
+            except:
+                try:
+                    import ast
+                    data = ast.literal_eval(content)
+                except:
+                    return f"❌ Failed to parse query data: {content[:100]}..."
+
+            # 5. Execute based on operation
+            if operation == 'find':
+                results = self.db_connector.execute_query(collection_name, data)
+            elif operation in ['countDocuments', 'count']:
+                count = self.db_connector.db[collection_name].count_documents(data if isinstance(data, dict) else {})
+                results = [{"count": count}]
+            elif operation == 'aggregate':
+                # Robust extraction for aggregate pipeline
+                    try:
+                         # Find outermost brackets
+                        start_idx = query_code.find('[')
+                        end_idx = query_code.rfind(']') + 1
                         
-                        # Use a brace counter to find the matching closing brace for the FIRST argument
-                        stack = []
-                        end = -1
-                        for i, char in enumerate(content_after_op[start:]):
-                            if char == '{':
-                                stack.append('{')
-                            elif char == '}':
-                                stack.pop()
-                                if not stack:
-                                    end = start + i + 1
-                                    break
-                        
-                        if end != -1:
-                            query_str = content_after_op[start:end]
-                            
-                            # Fix unquoted keys
-                            clean_query_str = re.sub(r'([{\s,])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', query_str)
-                            
-                            try:
-                                query_dict = json.loads(clean_query_str)
-                            except:
-                                try:
-                                    query_dict = json.loads(query_str)
-                                except (ValueError, SyntaxError):
-                                    try:
-                                        import ast
-                                        query_dict = ast.literal_eval(query_str)
-                                    except:
-                                        print(f"⚠ Parsing failed for query: {query_str}")
-                                        query_dict = {} 
+                        if start_idx != -1 and end_idx > start_idx:
+                            raw_content = query_code[start_idx:end_idx]
+                            clean_content = clean_json(raw_content)
+                            pipeline = json.loads(clean_content)
                         else:
-                             # Fallback if brace counting fails
-                             end = content_after_op.rfind('}') + 1
-                             query_str = content_after_op[start:end]
-                             # (clean logic repeated or shared function)
-                             clean_query_str = re.sub(r'([{\s,])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', query_str)
-                             try:
-                                query_dict = json.loads(clean_query_str)
-                             except: 
-                                query_dict = {} 
-                    
-                    if operation == 'find':
-                        results = self.db_connector.execute_query(collection_name, query_dict)
-                    else:
-                        # countDocuments/count logic
+                            raise ValueError("No brackets found")
+                    except:
+                        # Fallback: AST Literal Eval (handles single quotes/messy syntax better)
                         try:
-                            count = self.db_connector.db[collection_name].count_documents(query_dict)
-                            results = [{"count": count, "description": f"Total documents in {collection_name} matching query"}]
-                        except Exception as e:
-                            return f"❌ Error counting documents: {str(e)}"
-                
-                elif operation == 'aggregate':
-                    # Extract pipeline [...]
-                    pipeline = []
-                    if '[' in content_after_op:
-                        start = content_after_op.find('[')
-                        
-                        # Use a bracket counter to find the matching closing bracket for the array
-                        stack = []
-                        end = -1
-                        for i, char in enumerate(content_after_op[start:]):
-                            if char == '[':
-                                stack.append('[')
-                            elif char == ']':
-                                stack.pop()
-                                if not stack:
-                                    end = start + i + 1
-                                    break
-                        
-                        if end != -1:
-                            pipeline_str = content_after_op[start:end]
-                            
-                            # Fix unquoted keys for pipeline
-                            clean_pipeline_str = re.sub(r'([{\s,])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', pipeline_str)
-    
-                            try:
-                                # Try clean version
-                                pipeline = json.loads(clean_pipeline_str)
-                            except:
-                                try:
-                                    # Try original
-                                    pipeline = json.loads(pipeline_str)
-                                except (ValueError, SyntaxError):
-                                    try:
-                                        import ast
-                                        pipeline = ast.literal_eval(pipeline_str)
-                                    except:
-                                        print(f"⚠ Parsing failed for pipeline: {pipeline_str}")
-                                        pipeline = [] 
-                        else:
-                            # Fallback
-                            end = content_after_op.rfind(']') + 1
-                            pipeline_str = content_after_op[start:end]
-                            # (repeat clean logic)
-                            clean_pipeline_str = re.sub(r'([{\s,])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', pipeline_str)
-                            try:
-                                pipeline = json.loads(clean_pipeline_str)
-                            except:
+                            # Try to find list in the string manually
+                            pass # use content logic below
+                            content = query_code[match.end():] # fallback
+                            start_idx = content.find('[')
+                            end_idx = content.rfind(']') + 1
+                            if start_idx != -1: 
+                                content = content[start_idx:end_idx]
+                                import ast
+                                pipeline = ast.literal_eval(content)
+                            else:
                                 pipeline = []
+                        except:
+                            pipeline = []
+                    
+                    if not pipeline:
+                         return f"⚠ Parsing failed for pipeline:\n{query_code}"
+
+                    # INTELLIGENT PIPELINE REORDERING (Fixing 'Match before Unwind' bug)
+                    # If we see LOOKUP -> MATCH -> UNWIND, we must swap Match and Unwind
+                    for i in range(len(pipeline) - 1):
+                        stage_curr = list(pipeline[i].keys())[0]
+                        stage_next = list(pipeline[i+1].keys())[0]
+                        
+                        if stage_curr == '$match' and stage_next == '$unwind':
+                            # Check if match refers to a joined field (contains dot)
+                            match_query = pipeline[i]['$match']
+                            is_joined_field = any('.' in k for k in match_query.keys())
+                            
+                            if is_joined_field:
+                                # SWAP THEM!
+                                print("🔄 AUTO-FIXING PIPELINE: Swapping $match and $unwind")
+                                pipeline[i], pipeline[i+1] = pipeline[i+1], pipeline[i]
 
                     # Execute aggregate
-                    results = list(self.db_connector.db[collection_name].aggregate(pipeline))[:10]
+                    # Increase safety limit to 50 (was 10) so user requests for "Top 20" work
+                    results = list(self.db_connector.db[collection_name].aggregate(pipeline))[:50]
             
             else:
                 return f"⚠ Could not identify MongoDB command (find/aggregate/countDocuments) in response:\n{query_code}"
         
         except Exception as e:
-            return f"❌ Query execution error: {str(e)}\n\nGenerated query:\n{query_code}"
-        
+            return f"❌ Query execution error: {str(e)}\n\nGenerated query was for '{collection_name}'"
+
         # Format results
         formatted_response = self.formatter.format_results(results, user_question)
         
