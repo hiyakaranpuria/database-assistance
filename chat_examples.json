@@ -1,0 +1,22 @@
+[
+  {
+    "question": "Show me the top 5 customers by total spending",
+    "query": "db.orders.aggregate([ { \"$match\": { \"status\": \"completed\" } }, { \"$group\": { \"_id\": \"$customerId\", \"totalSpent\": { \"$sum\": \"$amount\" } } }, { \"$lookup\": { \"from\": \"customers\", \"localField\": \"_id\", \"foreignField\": \"_id\", \"as\": \"customer_info\" } }, { \"$unwind\": \"$customer_info\" }, { \"$project\": { \"customerName\": \"$customer_info.name\", \"totalSpent\": 1, \"_id\": 0 } }, { \"$sort\": { \"totalSpent\": -1 } }, { \"$limit\": 5 } ])"
+  },
+  {
+    "question": "Which products are out of stock?",
+    "query": "db.products.find({ \"stock\": 0 })"
+  },
+  {
+    "question": "Show all orders from users in Mumbai",
+    "query": "db.orders.aggregate([ { \"$lookup\": { \"from\": \"customers\", \"localField\": \"customerId\", \"foreignField\": \"_id\", \"as\": \"customer\" } }, { \"$unwind\": \"$customer\" }, { \"$match\": { \"customer.city\": { \"$regex\": \"Mumbai\", \"$options\": \"i\" } } }, { \"$project\": { \"orderDate\": 1, \"amount\": 1, \"customerName\": \"$customer.name\", \"_id\": 0 } } ])"
+  },
+  {
+    "question": "What is the average order value?",
+    "query": "db.orders.aggregate([ { \"$match\": { \"status\": \"completed\" } }, { \"$group\": { \"_id\": null, \"averageValue\": { \"$avg\": \"$amount\" } } } ])"
+  },
+  {
+    "question": "List orders placed in 2024",
+    "query": "db.orders.find({ \"orderDate\": { \"$gte\": \"2024-01-01\", \"$lte\": \"2024-12-31\" } })"
+  }
+]

@@ -210,6 +210,7 @@ class VectorSearchEngine:
             print(f"  -> Collection {collection_name}: Score {similarity:.4f}")
         
         top_collections = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:top_k]
+        print(f"✅ FOUND {len(top_collections)} RELEVANT TABLES: {', '.join([c[0] for c in top_collections])}")
         return top_collections
     
     def search_fields(self, user_question: str, collection_name: str, top_k: int = 3) -> List[Tuple]:
@@ -252,10 +253,24 @@ class PromptBuilder:
         self.db_connector = db_connector
         self.search_engine = VectorSearchEngine()
         self.search_engine.embeddings_db = embeddings_db
+        self.examples = self.load_examples()
+    
+    def load_examples(self, filepath='chat_examples.json'):
+        """Load few-shot examples from file"""
+        import json
+        import os
+        if os.path.exists(filepath):
+            try:
+                with open(filepath, 'r') as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Warning: Could not load examples: {e}")
+        return []
     
     def build_context(self, user_question: str, top_k_collections: int = 3) -> Tuple[str, List[Tuple]]:
-        """Build relevant schema context with LIVE samples"""
+        print(f"🔍 STEP 1: Vectorizing query for Table Mapping...")
         relevant_collections = self.search_engine.search_collections(user_question, top_k=top_k_collections)
+        print(f"📊 Mapping Result: Question relates to tables -> {[c[0] for c in relevant_collections]}")
         
         if not relevant_collections or relevant_collections[0][1] < 0.2:
             return "NO_RELEVANT_COLLECTION", []
@@ -264,26 +279,34 @@ class PromptBuilder:
         found_names = [n for n, s in relevant_collections]
         if 'orders' in found_names and 'customers' not in found_names:
             relevant_collections.append(('customers', 0.99))
+            print("🔗 AUTO-INJECTION: Adding 'customers' table for relational mapping.")
         if 'customers' in found_names and 'orders' not in found_names:
              relevant_collections.append(('orders', 0.5))
+             print("🔗 AUTO-INJECTION: Adding 'orders' table for relational mapping.")
 
-        context = "## Available MongoDB Collections\n\n"
-        context += "⚠️ IMPORTANT: Use ONLY the field names shown below. Do NOT invent field names.\n\n"
+        context = "## RELEVANT DATABASE SCHEMA MAPPING\n\n"
         
         for collection_name, similarity_score in relevant_collections:
             if similarity_score < 0.2:
                 continue
             
+            print(f"🔍 STEP 2: Extracting relevant fields for table '{collection_name}'...")
             collection_data = self.embeddings_db[collection_name]
+            context += f"### TABLE: `{collection_name}`\n"
             
-            context += f"### Collection: `{collection_name}`\n"
+            # CONTEXT PRUNING: Only show the top 5 most relevant fields
+            relevant_fields = self.search_engine.search_fields(user_question, collection_name, top_k=5)
             
-            # SHOW MORE FIELDS!
-            fields_shown = 0
-            for field_name, field_desc in collection_data['fields'].items():
-                if fields_shown >= 20: break # Increased to 20 to avoid missing fields
-                context += f"  - `{field_name}`: {field_desc}\n"
-                fields_shown += 1
+            if relevant_fields:
+                print(f"   -> Top fields found: {[f[0] for f in relevant_fields]}")
+                for field_name, score in relevant_fields:
+                    field_desc = collection_data['fields'].get(field_name, "Data field")
+                    context += f"  - {field_name} ({field_desc})\n"
+            else:
+                # Fallback to first few fields if search fails
+                for i, (field_name, field_desc) in enumerate(collection_data['fields'].items()):
+                    if i >= 5: break
+                    context += f"  - {field_name} ({field_desc})\n"
             
             context += "\n"
         
@@ -301,64 +324,32 @@ class PromptBuilder:
                 f"User asked: {user_question}\n\nThis question doesn't seem related to the database. Please ask something about the data in the MongoDB collections."
             )
         
-        system_prompt = """You are a MongoDB query expert. Your ONLY job is to:
-1. Generate MongoDB queries based on user questions
-2. Use ONLY the collections and fields provided
-3. Return ONLY valid MongoDB query syntax
-4. Do NOT make up field names or collections
-5. Do NOT attempt data modifications (no $set, $unset, deleteOne, deleteMany, drop, etc.)
-6. Do NOT hallucinate - if you can't construct a valid query, say "UNABLE_TO_QUERY"
-7. For simple key-value lookups use: db.collection.find({...})
-8. For SORTING, LIMITING (top N), GROUPING: Use db.collection.aggregate([...])
-   Example: db.products.aggregate([{"$sort":{"price":-1}}, {"$limit":5}]) -- Note: strictly check brackets and quotes!
-9. For counting: Use db.collection.countDocuments({...})
-    CRITICAL: TRIM regex patterns! Use "udaipur", NOT " udaipur". Never include leading spaces in regex.
-11. **RELATIONAL LOGIC & JOINS (CRITICAL)**:
-    - For text matching (cities, names) inside joins, USE REGEX: `{'customer_docs.city': {'$regex': 'Mumbai', '$options': 'i'}}`. Do NOT use simple equality.
-    - Before writing a query, CHECK THE SCHEMA of the target collection.
-    - If the user asks for a field (e.g. "city", "productName") that DOES NOT exist in the main collection (e.g. "orders"):
-      1. Find the related collection (e.g. "customers", "products").
-      2. Use `$lookup` to join them using the ID fields (e.g. `customerId` -> `_id`).
-    - NEVER assume a field exists if it is not in the schema list above.
-    - NEVER assume a field exists if it is not in the schema list above.
-    - **ORDER MATTERS**: You MUST `$unwind` the joined array **BEFORE** you filter (`$match`) on its fields.
-      - WRONG: `$lookup` -> `$match` -> `$unwind`
-      - CORRECT: `$lookup` -> `$unwind` -> `$match`
-
-14. **LOGIC TRANSLATION (CRITICAL)**:
-    - **"AND" vs "OR"**: If user lists multiple items (e.g. "Mumbai and Udaipur", "Red and Blue"), this implies **OR** logic in database terms.
-    - **Use `$in`**: `{"city": {"$in": ["Mumbai", "Udaipur"]}}` matches EITHER.
-    - **Use Regex OR**: `{"city": {"$regex": "Mumbai|Udaipur", "$options": "i"}}` matches EITHER.
-    - **NEVER** use two separate `$match` regexes for the same field (that creates "must be both", which returns empty).
-
-12. **ANTI-HALLUCINATION RULES**:
-    - The `orders` collection does NOT have `city`, `address`, or `customerAddress`. matching these fields on `orders` will FAIL.
-    - You MUST join to `customers` to filter by location.
-
-13. **FIELD SELECTION & LIMITS (USER RULES)**:
-    - **Default**: If no specific fields are asked, SHOW ALL FIELDS (do not use $project).
-    - **Specific**: If user asks for specific fields (e.g. "show names"), return ONLY those fields.
-    - **Limits**: If user asks for a number (e.g. "show 5"), use `{$limit: 5}`.
-    - **Joins**: If user asks about 2 tables, use `$lookup` and `$unwind` and include fields from BOTH tables.
-
-CRITICAL RULES:
-- NEVER suggest DROP, DELETE, UPDATE, or MODIFY operations
-- NEVER create new collections or fields
-- If the user asks for "Top N", "Bottom N", or "Sort By", you MUST use aggregate with $sort and $limit
-- If user asks for data modification, respond: "MODIFICATION_NOT_ALLOWED: Cannot modify database"
-- If user asks something unrelated to database, respond: "OUT_OF_SCOPE: This question is not related to the database"
-
-Return ONLY the MongoDB query code, nothing else."""
+        system_prompt = """You are a MongoDB expert. Rules:
+1. Return ONLY the code starting with 'db.'
+2. Use ONLY the provided collections and fields.
+3. For Joins: use $lookup -> $unwind -> $match.
+4. For Searches: use $regex with 'i' option.
+5. NO data modification. If unsure, say UNABLE_TO_QUERY.
+Return ONLY valid code, no text."""
         
+        # Add Few-Shot Examples
+        examples_text = "\n### Reference Examples (Follow this style):\n"
+        for ex in self.examples[:3]: # Use top 3 examples to keep prompt short
+            examples_text += f"Question: \"{ex['question']}\"\nQuery: {ex['query']}\n\n"
+
         user_prompt = f"""Available Database Schema:
 {schema_context}
+
+{examples_text}
 
 User Question: "{user_question}"
 
 Generate the MongoDB query to answer this question. Use ONLY the collections and fields shown above.
 Return ONLY the full MongoDB query code starting with 'db.', no explanation.
-Example: db.orders.find({...}) or db.orders.aggregate([...])
 """
+        
+        print(f"DEBUG: System Prompt Length: {len(system_prompt)} chars")
+        print(f"DEBUG: User Prompt Length: {len(user_prompt)} chars")
         
         return system_prompt, user_prompt
 
@@ -385,18 +376,26 @@ class LocalLLMInterface:
                 "stream": False,
                 "options": {
                     "temperature": temperature,
-                    "num_predict": 256  # Optimized for faster generation
-                }
+                    "num_predict": 256
+                },
+                "keep_alive": "5m"  # Keep model in memory for 5 mins after request
             }
             
+            print(f"\n--- DATA SENDING TO LLM ---")
+            print(f"System Prompt: {system_prompt[:200]}...")
+            print(f"User Question: {user_prompt.split('User Question: ')[-1]}")
+            print(f"---------------------------\n")
+
             response = requests.post(
                 f"{self.api_url}/api/generate", 
                 json=payload, 
-                timeout=180  # Increased to 180s for slower hardware
+                timeout=180
             )
             
             if response.status_code == 200:
-                return response.json().get('response', '').strip()
+                result = response.json().get('response', '').strip()
+                print(f"--- RECEIVED FROM LLM ---\n{result}\n--------------------------")
+                return result
             else:
                 return f"ERROR: Ollama API returned {response.status_code}"
         
@@ -506,7 +505,59 @@ class MongoDBChatAgent:
             
         self.prompt_builder = PromptBuilder(self.embeddings, self.db_connector)
         
-    
+    def validate_query_fields(self, collection_name: str, query_data: any) -> Optional[str]:
+        """Validate that all fields in the query exist in the collection schema"""
+        if collection_name not in self.embeddings:
+            return None # Skip if metadata is missing
+            
+        allowed_fields = set(self.embeddings[collection_name]['fields'].keys())
+        allowed_fields.update(['_id', 'id', 'count', 'total', 'avg', 'sum', 'min', 'max'])
+        
+        def get_all_keys(obj, is_top_level_def=False):
+            """Extract all keys from a query object, ignoring $ operators unless they define new fields"""
+            keys = []
+            if isinstance(obj, dict):
+                for k, v in obj.items():
+                    if is_top_level_def:
+                        # In stages like $group or $project, top-level keys ARE the field definitions
+                        if k != '_id': keys.append(k)
+                    elif not k.startswith('$'):
+                        keys.append(k)
+                    
+                    # Recursive check
+                    keys.extend(get_all_keys(v))
+            elif isinstance(obj, list):
+                for item in obj:
+                    keys.extend(get_all_keys(item))
+            return keys
+
+        if isinstance(query_data, list): # Aggregation Pipeline
+            virtual_fields = set()
+            for stage in query_data:
+                if not stage: continue
+                op = list(stage.keys())[0]
+                
+                # 1. Register new fields created by this stage
+                if op == '$lookup':
+                    as_field = stage['$lookup'].get('as')
+                    if as_field: virtual_fields.add(as_field)
+                elif op in ['$group', '$project', '$addFields']:
+                    new_keys = get_all_keys(stage[op], is_top_level_def=True)
+                    virtual_fields.update(new_keys)
+                
+                # 2. Validate all keys used in this stage
+                for key in get_all_keys(stage[op]):
+                    root_key = key.split('.')[0]
+                    # We allow $ operators within the values, and we allow fields that exist or were created
+                    if root_key not in allowed_fields and root_key not in virtual_fields:
+                        return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(list(allowed_fields)[:10])}..."
+        else: # Find Query
+            for key in get_all_keys(query_data):
+                root_key = key.split('.')[0]
+                if root_key not in allowed_fields:
+                    return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(list(allowed_fields)[:10])}..."
+        
+        return None
     def process_query(self, user_question: str) -> str:
         """Process user query and return answer"""
         
@@ -683,7 +734,14 @@ class MongoDBChatAgent:
                 except:
                     return f"❌ Failed to parse query data: {content[:100]}..."
 
-            # 5. Execute based on operation
+            # 5. Schema Guardrail: Validate Fields
+            validation_error = self.validate_query_fields(collection_name, data)
+            if validation_error:
+                print(f"🚩 SCHEMA GUARDRAIL TRIGGERED: {validation_error}")
+                # We could try to auto-retry here, but for now, we'll return the error
+                return f"{validation_error}\n\nAsk me again, but try to use fields from the schema list above."
+
+            # 6. Execute based on operation
             if operation == 'find':
                 results = self.db_connector.execute_query(collection_name, data)
             elif operation in ['countDocuments', 'count']:
