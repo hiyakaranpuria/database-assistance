@@ -327,10 +327,10 @@ class PromptBuilder:
         system_prompt = """You are a MongoDB expert. Rules:
 1. Return ONLY the code starting with 'db.'
 2. Use ONLY the provided collections and fields.
-3. For Joins: use $lookup -> $unwind -> $match.
-4. For Searches: use $regex with 'i' option.
-5. NO data modification. If unsure, say UNABLE_TO_QUERY.
-Return ONLY valid code, no text."""
+3. CRITICAL: ALWAYS use the '$' prefix for operators (e.g., $match, $group, $lookup, $sum, $avg).
+4. For Joins: use $lookup -> $unwind -> $match.
+5. For Dates: Use $expr with $year/$month or date ranges.
+Return ONLY valid, executable code."""
         
         # Add Few-Shot Examples
         examples_text = "\n### Reference Examples (Follow this style):\n"
@@ -508,54 +508,80 @@ class MongoDBChatAgent:
     def validate_query_fields(self, collection_name: str, query_data: any) -> Optional[str]:
         """Validate that all fields in the query exist in the collection schema"""
         if collection_name not in self.embeddings:
-            return None # Skip if metadata is missing
+            return None
             
-        allowed_fields = set(self.embeddings[collection_name]['fields'].keys())
-        allowed_fields.update(['_id', 'id', 'count', 'total', 'avg', 'sum', 'min', 'max'])
+        # Core fields from the database
+        db_fields = set(self.embeddings[collection_name]['fields'].keys())
         
-        def get_all_keys(obj, is_top_level_def=False):
-            """Extract all keys from a query object, ignoring $ operators unless they define new fields"""
-            keys = []
+        # Reserved MongoDB keywords and commonly used virtual field names
+        reserved_mongo_keys = {
+            'from', 'localField', 'foreignField', 'as', 'path', 'preserveNullAndEmptyArrays', 
+            'input', 'initialValue', 'in', 'cond', 'then', 'else', 'case', 'branches', 'default',
+            'filter', 'vars', 'body'
+        }
+        
+        # Allowed calculation aliases
+        generic_allowed = {'_id', 'id', 'count', 'total', 'avg', 'sum', 'min', 'max', 'revenue', 'spending', 'score'}
+        
+        virtual_fields = set()
+
+        def extract_fields(obj, is_definition_stage=False):
+            fields_found = []
             if isinstance(obj, dict):
                 for k, v in obj.items():
-                    if is_top_level_def:
-                        # In stages like $group or $project, top-level keys ARE the field definitions
-                        if k != '_id': keys.append(k)
-                    elif not k.startswith('$'):
-                        keys.append(k)
+                    # If this is a $group, $project, or $addFields, the top-level keys ARE new fields
+                    if is_definition_stage and not k.startswith('$') and k != '_id':
+                        virtual_fields.add(k)
                     
-                    # Recursive check
-                    keys.extend(get_all_keys(v))
+                    # If it's a field name (not a $ operator and not a reserved keyword)
+                    if not k.startswith('$') and k not in reserved_mongo_keys:
+                        # Only treat it as a "field to validate" if it's not a definition
+                        if not is_definition_stage:
+                            fields_found.append(k)
+                    
+                    # Recurse into values
+                    fields_found.extend(extract_fields(v))
             elif isinstance(obj, list):
                 for item in obj:
-                    keys.extend(get_all_keys(item))
-            return keys
+                    fields_found.extend(extract_fields(item))
+            elif isinstance(obj, str) and obj.startswith('$'):
+                # Handle cases like "$customer_info.name" -> extract "customer_info"
+                cleaned = obj.lstrip('$').split('.')[0]
+                if cleaned not in reserved_mongo_keys:
+                    fields_found.append(cleaned)
+            return fields_found
 
-        if isinstance(query_data, list): # Aggregation Pipeline
-            virtual_fields = set()
+        if isinstance(query_data, list): # Aggregation
             for stage in query_data:
                 if not stage: continue
                 op = list(stage.keys())[0]
                 
-                # 1. Register new fields created by this stage
-                if op == '$lookup':
-                    as_field = stage['$lookup'].get('as')
-                    if as_field: virtual_fields.add(as_field)
-                elif op in ['$group', '$project', '$addFields']:
-                    new_keys = get_all_keys(stage[op], is_top_level_def=True)
-                    virtual_fields.update(new_keys)
+                # Identify if this stage creates new fields
+                is_def = op in ['$group', '$project', '$addFields', '$set']
                 
-                # 2. Validate all keys used in this stage
-                for key in get_all_keys(stage[op]):
+                # Special case for lookup
+                if op == '$lookup':
+                    as_val = stage[op].get('as')
+                    if as_val: virtual_fields.add(as_val)
+
+                # Extract and check fields
+                found_keys = extract_fields(stage[op], is_definition_stage=is_def)
+                for key in found_keys:
                     root_key = key.split('.')[0]
-                    # We allow $ operators within the values, and we allow fields that exist or were created
-                    if root_key not in allowed_fields and root_key not in virtual_fields:
-                        return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(list(allowed_fields)[:10])}..."
+                    if (root_key not in db_fields and 
+                        root_key not in virtual_fields and 
+                        root_key not in generic_allowed and
+                        not root_key.startswith('$')):
+                        
+                        all_allowed = sorted(list(db_fields | generic_allowed))
+                        return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(all_allowed[:15])}..."
         else: # Find Query
-            for key in get_all_keys(query_data):
+            found_keys = extract_fields(query_data)
+            for key in found_keys:
                 root_key = key.split('.')[0]
-                if root_key not in allowed_fields:
-                    return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(list(allowed_fields)[:10])}..."
+                if root_key not in db_fields and root_key not in generic_allowed:
+                    all_allowed = sorted(list(db_fields | generic_allowed))
+                    return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(all_allowed[:15])}..."
         
         return None
     def process_query(self, user_question: str) -> str:
@@ -697,29 +723,38 @@ class MongoDBChatAgent:
             # Fix unquoted keys, handle single quotes, etc.
             # Using a simplified version of the previous logic
             def clean_json(s):
-                # Replace single quotes with double quotes (carefully)
+                # 0. Flatten the string - remove ALL newlines and extra spaces
+                s = s.replace('\n', ' ').replace('\r', ' ')
+                s = re.sub(r'\s+', ' ', s).strip()
+
+                # 1. Standardize quotes
                 s = s.replace("'", '"')
-                # Add quotes to unquoted keys
-                s = re.sub(r'([{,\s])([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', s)
                 
-                # SAFETY FIX: Trim Regex patterns (fixes " udaipur" issue)
-                s = re.sub(r'("\$regex"\s*:\s*)"\s*(\S.*?)\s*"', r'\1"\2"', s)
+                # 2. Add quotes ONLY to unquoted keys that do NOT start with $
+                # This regex matches: { key: or , key: but NOT "$key":
+                # It only adds quotes if the key is NOT already quoted
+                s = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', s)
                 
-                # SAFETY FIX: Fix quoted objects in arrays (fixes "{$limit":10})
-                # Turns "{$limit":10} into {"$limit":10}
-                s = re.sub(r'"\s*(\{[^"]+?\})\s*"', r'\1', s)
-                s = re.sub(r'"\s*(\{\$[^"]+?\})\s*"', r'\1', s)
+                # 3. Fix missing '$' prefix in common MongoDB operators
+                # e.g. "match": -> "$match":
+                mongo_ops = ['match', 'group', 'sort', 'limit', 'project', 'unwind', 'lookup', 
+                            'sum', 'avg', 'count', 'max', 'min', 'expr', 'eq', 'gt', 'lt', 'gte', 'lte',
+                            'addFields', 'replaceRoot', 'out', 'skip']
+                for op in mongo_ops:
+                    # Only fix if NOT already prefixed with $
+                    s = re.sub(r'"(?!\$)' + op + r'"\s*:', r'"$' + op + r'":', s)
                 
-                # SAFETY FIX: Auto-close brackets if missing
-                open_sq = s.count('[')
-                close_sq = s.count(']')
-                if open_sq > close_sq:
-                    s += int(open_sq - close_sq) * ']'
+                # 4. Fix values that should have $ prefix (e.g., "customerId" -> "$customerId" in $group)
+                # This is handled by the AI, we don't touch values here
                 
-                open_br = s.count('{')
-                close_br = s.count('}')
-                if open_br > close_br:
-                    s += int(open_br - close_br) * '}'
+                # 5. Clean up any double-dollars we accidentally created
+                s = s.replace('"$$', '"$')
+                
+                # 6. Final bracket check
+                open_sq, close_sq = s.count('['), s.count(']')
+                if open_sq > close_sq: s += (open_sq - close_sq) * ']'
+                open_br, close_br = s.count('{'), s.count('}')
+                if open_br > close_br: s += (open_br - close_br) * '}'
                 
                 return s
 
@@ -748,57 +783,31 @@ class MongoDBChatAgent:
                 count = self.db_connector.db[collection_name].count_documents(data if isinstance(data, dict) else {})
                 results = [{"count": count}]
             elif operation == 'aggregate':
-                # Robust extraction for aggregate pipeline
-                    try:
-                         # Find outermost brackets
-                        start_idx = query_code.find('[')
-                        end_idx = query_code.rfind(']') + 1
-                        
-                        if start_idx != -1 and end_idx > start_idx:
-                            raw_content = query_code[start_idx:end_idx]
-                            clean_content = clean_json(raw_content)
-                            pipeline = json.loads(clean_content)
-                        else:
-                            raise ValueError("No brackets found")
-                    except:
-                        # Fallback: AST Literal Eval (handles single quotes/messy syntax better)
-                        try:
-                            # Try to find list in the string manually
-                            pass # use content logic below
-                            content = query_code[match.end():] # fallback
-                            start_idx = content.find('[')
-                            end_idx = content.rfind(']') + 1
-                            if start_idx != -1: 
-                                content = content[start_idx:end_idx]
-                                import ast
-                                pipeline = ast.literal_eval(content)
-                            else:
-                                pipeline = []
-                        except:
-                            pipeline = []
+                # Use the 'data' we already parsed successfully at line 760
+                pipeline = data if isinstance(data, list) else []
+                
+                if not pipeline:
+                     return f"⚠ Could not parse aggregation pipeline from AI response."
+
+                # INTELLIGENT PIPELINE REORDERING (Fixing 'Match before Unwind' bug)
+                # If we see LOOKUP -> MATCH -> UNWIND, we must swap Match and Unwind
+                for i in range(len(pipeline) - 1):
+                    stage_curr = list(pipeline[i].keys())[0]
+                    stage_next = list(pipeline[i+1].keys())[0]
                     
-                    if not pipeline:
-                         return f"⚠ Parsing failed for pipeline:\n{query_code}"
-
-                    # INTELLIGENT PIPELINE REORDERING (Fixing 'Match before Unwind' bug)
-                    # If we see LOOKUP -> MATCH -> UNWIND, we must swap Match and Unwind
-                    for i in range(len(pipeline) - 1):
-                        stage_curr = list(pipeline[i].keys())[0]
-                        stage_next = list(pipeline[i+1].keys())[0]
+                    if stage_curr == '$match' and stage_next == '$unwind':
+                        # Check if match refers to a joined field (contains dot)
+                        match_query = pipeline[i]['$match']
+                        is_joined_field = any('.' in k for k in match_query.keys())
                         
-                        if stage_curr == '$match' and stage_next == '$unwind':
-                            # Check if match refers to a joined field (contains dot)
-                            match_query = pipeline[i]['$match']
-                            is_joined_field = any('.' in k for k in match_query.keys())
-                            
-                            if is_joined_field:
-                                # SWAP THEM!
-                                print("🔄 AUTO-FIXING PIPELINE: Swapping $match and $unwind")
-                                pipeline[i], pipeline[i+1] = pipeline[i+1], pipeline[i]
+                        if is_joined_field:
+                            # SWAP THEM!
+                            print("🔄 AUTO-FIXING PIPELINE: Swapping $match and $unwind")
+                            pipeline[i], pipeline[i+1] = pipeline[i+1], pipeline[i]
 
-                    # Execute aggregate
-                    # Increase safety limit to 50 (was 10) so user requests for "Top 20" work
-                    results = list(self.db_connector.db[collection_name].aggregate(pipeline))[:50]
+                # Execute aggregate
+                # Increase safety limit to 50 (was 10) so user requests for "Top 20" work
+                results = list(self.db_connector.db[collection_name].aggregate(pipeline))[:50]
             
             else:
                 return f"⚠ Could not identify MongoDB command (find/aggregate/countDocuments) in response:\n{query_code}"
