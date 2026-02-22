@@ -204,7 +204,7 @@ st.sidebar.header("📈 Analytics Options")
 analysis_type = st.sidebar.selectbox(
     "Choose Analysis Type",
     ["Chat Interface", "Sales Comparison", "Monthly Trends", "Product Analysis", 
-     "Customer Insights", "Geographic Analysis", "Custom Query", "AI Data Cleaning"]
+     "Customer Insights", "Geographic Analysis", "🔍 AI Insights", "Custom Query", "AI Data Cleaning"]
 )
 
 if analysis_type == "Chat Interface":
@@ -535,6 +535,86 @@ elif analysis_type == "Geographic Analysis":
         display_cities = city_data.copy()
         display_cities['totalSales'] = display_cities['totalSales'].apply(lambda x: f"${x:,.2f}")
         st.dataframe(display_cities, use_container_width=True)
+
+elif analysis_type == "🔍 AI Insights":
+    st.subheader("🔍 AI-Powered Business Insights")
+    st.caption("Auto-generated actionable insights from your data — no queries needed. Works with **any** database.")
+
+    from insights_engine import UniversalInsightsEngine
+
+    @st.cache_resource
+    def get_universal_engine():
+        return UniversalInsightsEngine()
+
+    engine = get_universal_engine()
+
+    def render_kpi_metrics(metrics_dict):
+        if not metrics_dict:
+            return
+        cols = st.columns(min(len(metrics_dict), 4))
+        for col, (label, value) in zip(cols, metrics_dict.items()):
+            col.metric(label, value)
+
+    tab_auto, tab_custom = st.tabs(["📌 Auto Insights", "💬 Request Custom Insight"])
+
+    with tab_auto:
+        with st.spinner("🔍 Scanning database and generating insights..."):
+            top_insights = engine.get_top_insights(n=5)
+
+        if not top_insights:
+            st.warning("No insights could be generated from the current database.")
+        else:
+            st.success(f"✨ Found **{len(top_insights)}** key insights from your database!")
+
+            # Schema overview
+            with st.expander("🗄️ Discovered Database Schema"):
+                st.markdown(engine.get_schema_summary())
+
+            # Render insights in 2-column grid
+            for i in range(0, len(top_insights), 2):
+                cols = st.columns(2)
+                for j, col in enumerate(cols):
+                    idx = i + j
+                    if idx >= len(top_insights):
+                        break
+                    ins = top_insights[idx]
+                    with col:
+                        with st.container(border=True):
+                            if ins.metrics:
+                                render_kpi_metrics(ins.metrics)
+                            if ins.fig:
+                                st.plotly_chart(ins.fig, use_container_width=True,
+                                                config={"displayModeBar": False})
+                            st.success(f"💡 {ins.takeaway}")
+
+    with tab_custom:
+        # Show discovered schema for guidance
+        with st.expander("📋 Available Collections & Fields", expanded=False):
+            st.markdown(engine.get_schema_summary())
+
+        st.markdown(
+            "Ask a question about your data and get an **instant visual insight**.\n\n"
+            "**Try things like:**\n"
+            "- *Show [field] distribution*\n"
+            "- *[field] trend over time*\n"
+            "- *Top [collection] by [numeric field]*\n"
+            "- *Average [numeric field] by [category]*\n"
+            "- *Correlation between [field A] and [field B]*"
+        )
+        custom_q = st.text_input("🔎 What insight do you want?",
+                                 placeholder="e.g. Show status distribution, or Top products by price")
+        if st.button("Generate Insight", type="primary", use_container_width=True):
+            if custom_q.strip():
+                with st.spinner("Generating your insight..."):
+                    c_fig, c_take, c_df = engine.generate_custom_insight(custom_q)
+                if c_fig:
+                    st.plotly_chart(c_fig, use_container_width=True, config={"displayModeBar": False})
+                st.success(f"💡 {c_take}")
+                if c_df is not None and not c_df.empty:
+                    with st.expander("📋 View raw data"):
+                        st.dataframe(c_df, use_container_width=True)
+            else:
+                st.warning("Please enter a question to generate an insight.")
 
 elif analysis_type == "Custom Query":
     st.subheader("🔧 Custom MongoDB Query")
