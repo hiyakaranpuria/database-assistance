@@ -1,11 +1,11 @@
 [
     {
         "question": "Which month in 2024 had the highest total sales volume?",
-        "query": "db.orders.aggregate([ { \"$match\": { \"$expr\": { \"$eq\": [ { \"$year\": \"$orderDate\" }, 2024 ] } } }, { \"$group\": { \"_id\": { \"$month\": \"$orderDate\" }, \"totalSalesVolume\": { \"$sum\": \"$quantity\" } } }, { \"$sort\": { \"totalSalesVolume\": -1 } }, { \"$limit\": 1 } ])"
+        "query": "db.orders.aggregate([ { \"$match\": { \"$expr\": { \"$eq\": [ { \"$year\": \"$orderDate\" }, 2024 ] } } }, { \"$group\": { \"_id\": { \"$month\": \"$orderDate\" }, \"TotalSales\": { \"$sum\": \"$quantity\" } } }, { \"$sort\": { \"TotalSales\": -1 } }, { \"$limit\": 1 } ])"
     },
     {
         "question": "Show me the top 5 customers by total spending",
-        "query": "db.orders.aggregate([ { \"$match\": { \"status\": \"completed\" } }, { \"$group\": { \"_id\": \"$customerId\", \"totalSpent\": { \"$sum\": \"$amount\" } } }, { \"$lookup\": { \"from\": \"customers\", \"localField\": \"_id\", \"foreignField\": \"_id\", \"as\": \"customer_info\" } }, { \"$unwind\": \"$customer_info\" }, { \"$project\": { \"customerName\": \"$customer_info.name\", \"totalSpent\": 1, \"_id\": 0 } }, { \"$sort\": { \"totalSpent\": -1 } }, { \"$limit\": 5 } ])"
+        "query": "db.orders.aggregate([ { \"$group\": { \"_id\": \"$customerId\", \"TotalSpent\": { \"$sum\": \"$amount\" } } }, { \"$lookup\": { \"from\": \"customers\", \"localField\": \"_id\", \"foreignField\": \"_id\", \"as\": \"customer\" } }, { \"$unwind\": \"$customer\" }, { \"$project\": { \"Name\": \"$customer.name\", \"TotalSpent\": 1, \"_id\": 0 } }, { \"$sort\": { \"TotalSpent\": -1 } }, { \"$limit\": 5 } ])"
     },
     {
         "question": "Which products are out of stock?",
@@ -13,11 +13,11 @@
     },
     {
         "question": "Show all orders from users in Mumbai",
-        "query": "db.orders.aggregate([ { \"$lookup\": { \"from\": \"customers\", \"localField\": \"customerId\", \"foreignField\": \"_id\", \"as\": \"customer\" } }, { \"$unwind\": \"$customer\" }, { \"$match\": { \"customer.city\": { \"$regex\": \"Mumbai\", \"$options\": \"i\" } } }, { \"$project\": { \"orderDate\": 1, \"amount\": 1, \"customerName\": \"$customer.name\", \"_id\": 0 } } ])"
+        "query": "db.orders.aggregate([ { \"$lookup\": { \"from\": \"customers\", \"localField\": \"customerId\", \"foreignField\": \"_id\", \"as\": \"customer\" } }, { \"$unwind\": \"$customer\" }, { \"$match\": { \"customer.city\": { \"$regex\": \"Mumbai\", \"$options\": \"i\" } } }, { \"$project\": { \"OrderDate\": \"$orderDate\", \"Amount\": \"$amount\", \"CustomerName\": \"$customer.name\", \"_id\": 0 } } ])"
     },
     {
         "question": "What is the average order value?",
-        "query": "db.orders.aggregate([ { \"$match\": { \"status\": \"completed\" } }, { \"$group\": { \"_id\": null, \"averageValue\": { \"$avg\": \"$amount\" } } } ])"
+        "query": "db.orders.aggregate([ { \"$group\": { \"_id\": null, \"AverageValue\": { \"$avg\": \"$amount\" } } } ])"
     },
     {
         "question": "List orders placed in 2024",

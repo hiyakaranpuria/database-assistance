@@ -7,10 +7,10 @@ import ast  # ✅ FIX 2: Added missing import
 import re
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
-from sentence_transformers import SentenceTransformer
 from pymongo import MongoClient
 from bson import ObjectId
 import subprocess
+import copy
 
 # ============================================================================
 # MONGODB CONNECTION & SCHEMA EXTRACTION
@@ -124,267 +124,29 @@ class MongoDBConnector:
 
 
 # ============================================================================
-# EMBEDDING & VECTOR SEARCH
-# ============================================================================
-
-class VectorSearchEngine:
-    """Generate embeddings and perform semantic search"""
-    
-    def __init__(self, model_name='all-MiniLM-L6-v2'):
-        self.model = SentenceTransformer(model_name)
-        self.embeddings_db = {}
-    
-    def generate_embeddings(self, schema: Dict) -> Dict:
-        """Generate embeddings for all collections"""
-        for collection_name, collection_info in schema.items():
-            # Collection embedding
-            collection_text = f"{collection_name}: {collection_info['description']}"
-            collection_embedding = self.model.encode(collection_text)
-            
-            # Field embeddings
-            field_embeddings = {}
-            for field_name, field_desc in collection_info['fields'].items():
-                field_text = f"{field_name}: {field_desc}"
-                field_embedding = self.model.encode(field_text)
-                field_embeddings[field_name] = field_embedding.tolist()
-            
-            # Store
-            self.embeddings_db[collection_name] = {
-                "description": collection_info['description'],
-                "collection_embedding": collection_embedding.tolist(),
-                "fields": collection_info['fields'],
-                "field_embeddings": field_embeddings,
-                "doc_count": collection_info['doc_count'],
-                "indexed_fields": collection_info['indexed_fields']
-            }
-        
-        return self.embeddings_db
-    
-    def save_embeddings(self, filepath='embeddings.pkl'):
-        """Save embeddings to file"""
-        with open(filepath, 'wb') as f:
-            pickle.dump(self.embeddings_db, f)
-    
-    def load_embeddings(self, filepath='embeddings.pkl'):
-        """Load embeddings from file"""
-        if os.path.exists(filepath):
-            with open(filepath, 'rb') as f:
-                self.embeddings_db = pickle.load(f)
-            return True
-        return False
-    
-    def search_collections(self, user_question: str, top_k: int = 3) -> List[Tuple]:
-        """Find most relevant collections for user question"""
-        question_embedding = self.model.encode(user_question)
-        question_embedding = np.array(question_embedding)
-        
-        similarities = {}
-        print(f"\nDEBUG: Searching for matches for: '{user_question}'")
-        for collection_name, collection_data in self.embeddings_db.items():
-            collection_embedding = np.array(collection_data['collection_embedding'])
-            norm1 = np.linalg.norm(question_embedding)
-            norm2 = np.linalg.norm(collection_embedding)
-            
-            if norm1 == 0 or norm2 == 0:
-                similarity = 0.0
-            else:
-                similarity = np.dot(question_embedding, collection_embedding) / (norm1 * norm2)
-            
-            # STRONG KEYWORD FALLBACK
-            q_lower = user_question.lower()
-            c_lower = collection_name.lower()
-            
-            # Smart Aliases
-            check_name = c_lower
-            if c_lower == 'customers' and ('user' in q_lower or 'client' in q_lower):
-                # If user asks for 'users', boost 'customers' too because that's where data often is
-                print(f"  -> ALIAS MATCH: 'users' mapped to '{collection_name}'")
-                similarity = max(similarity, 0.75)
-            
-            # Check for plural and singular
-            if c_lower in q_lower or (c_lower.rstrip('s') in q_lower and len(c_lower) > 3):
-                print(f"  -> KEYWORD MATCH FOUND: {collection_name}")
-                similarity = max(similarity, 0.8) # Set very high score
-            
-            similarities[collection_name] = similarity
-            print(f"  -> Collection {collection_name}: Score {similarity:.4f}")
-        
-        top_collections = sorted(similarities.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        print(f"✅ FOUND {len(top_collections)} RELEVANT TABLES: {', '.join([c[0] for c in top_collections])}")
-        return top_collections
-    
-    def search_fields(self, user_question: str, collection_name: str, top_k: int = 3) -> List[Tuple]:
-        """Find most relevant fields in a collection"""
-        if collection_name not in self.embeddings_db:
-            return []
-        
-        question_embedding = self.model.encode(user_question)
-        question_embedding = np.array(question_embedding)
-        
-        collection_data = self.embeddings_db[collection_name]
-        field_embeddings = collection_data['field_embeddings']
-        
-        field_similarities = {}
-        for field_name, field_embedding in field_embeddings.items():
-            field_embedding = np.array(field_embedding)
-            norm1 = np.linalg.norm(question_embedding)
-            norm2 = np.linalg.norm(field_embedding)
-            
-            if norm1 == 0 or norm2 == 0:
-                similarity = 0.0
-            else:
-                similarity = np.dot(question_embedding, field_embedding) / (norm1 * norm2)
-            
-            field_similarities[field_name] = similarity
-        
-        top_fields = sorted(field_similarities.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        return top_fields
-
-
-# ============================================================================
-# PROMPT BUILDER FOR LLM
-# ============================================================================
-
-class PromptBuilder:
-    """Build optimized prompts for MongoDB queries"""
-    
-    def __init__(self, embeddings_db: Dict, db_connector):
-        self.embeddings_db = embeddings_db
-        self.db_connector = db_connector
-        self.search_engine = VectorSearchEngine()
-        self.search_engine.embeddings_db = embeddings_db
-        self.examples = self.load_examples()
-    
-    def load_examples(self, filepath='chat_examples.json'):
-        """Load few-shot examples from file"""
-        import json
-        import os
-        if os.path.exists(filepath):
-            try:
-                with open(filepath, 'r') as f:
-                    return json.load(f)
-            except Exception as e:
-                print(f"Warning: Could not load examples: {e}")
-        return []
-    
-    def build_context(self, user_question: str, top_k_collections: int = 3) -> Tuple[str, List[Tuple]]:
-        print(f"🔍 STEP 1: Vectorizing query for Table Mapping...")
-        relevant_collections = self.search_engine.search_collections(user_question, top_k=top_k_collections)
-        print(f"📊 Mapping Result: Question relates to tables -> {[c[0] for c in relevant_collections]}")
-        
-        if not relevant_collections or relevant_collections[0][1] < 0.2:
-            return "NO_RELEVANT_COLLECTION", []
-        
-        # SMART CONTEXT: If 'orders' is found, ALWAYS include 'customers' to enable joins
-        found_names = [n for n, s in relevant_collections]
-        if 'orders' in found_names and 'customers' not in found_names:
-            relevant_collections.append(('customers', 0.99))
-            print("🔗 AUTO-INJECTION: Adding 'customers' table for relational mapping.")
-        if 'customers' in found_names and 'orders' not in found_names:
-             relevant_collections.append(('orders', 0.5))
-             print("🔗 AUTO-INJECTION: Adding 'orders' table for relational mapping.")
-
-        context = "## RELEVANT DATABASE SCHEMA MAPPING\n\n"
-        
-        for collection_name, similarity_score in relevant_collections:
-            if similarity_score < 0.2:
-                continue
-            
-            print(f"🔍 STEP 2: Extracting relevant fields for table '{collection_name}'...")
-            collection_data = self.embeddings_db[collection_name]
-            context += f"### TABLE: `{collection_name}`\n"
-            
-            # CONTEXT PRUNING: Only show the top 5 most relevant fields
-            relevant_fields = self.search_engine.search_fields(user_question, collection_name, top_k=5)
-            
-            if relevant_fields:
-                print(f"   -> Top fields found: {[f[0] for f in relevant_fields]}")
-                for field_name, score in relevant_fields:
-                    field_desc = collection_data['fields'].get(field_name, "Data field")
-                    context += f"  - {field_name} ({field_desc})\n"
-            else:
-                # Fallback to first few fields if search fails
-                for i, (field_name, field_desc) in enumerate(collection_data['fields'].items()):
-                    if i >= 5: break
-                    context += f"  - {field_name} ({field_desc})\n"
-            
-            context += "\n"
-        
-        return context, relevant_collections
-        
-        return context
-    
-    def get_reliable_prompt(self, user_question: str) -> Tuple[str, str]:
-        """Generate a reliable prompt that prevents hallucination"""
-        schema_context = self.build_context(user_question)
-        
-        if schema_context == "NO_RELEVANT_COLLECTION":
-            return (
-                "You are a MongoDB query assistant. If the user asks something not related to the database, politely decline and suggest a relevant database query.",
-                f"User asked: {user_question}\n\nThis question doesn't seem related to the database. Please ask something about the data in the MongoDB collections."
-            )
-        
-        system_prompt = """You are a MongoDB expert. Rules:
-1. Return ONLY the code starting with 'db.'
-2. Use ONLY the provided collections and fields.
-3. CRITICAL: ALWAYS use the '$' prefix for operators (e.g., $match, $group, $lookup, $sum, $avg).
-4. For Joins: use $lookup -> $unwind -> $match.
-5. For Dates: Use $expr with $year/$month or date ranges.
-Return ONLY valid, executable code."""
-        
-        # Add Few-Shot Examples
-        examples_text = "\n### Reference Examples (Follow this style):\n"
-        for ex in self.examples[:3]: # Use top 3 examples to keep prompt short
-            examples_text += f"Question: \"{ex['question']}\"\nQuery: {ex['query']}\n\n"
-
-        user_prompt = f"""Available Database Schema:
-{schema_context}
-
-{examples_text}
-
-User Question: "{user_question}"
-
-Generate the MongoDB query to answer this question. Use ONLY the collections and fields shown above.
-Return ONLY the full MongoDB query code starting with 'db.', no explanation.
-"""
-        
-        print(f"DEBUG: System Prompt Length: {len(system_prompt)} chars")
-        print(f"DEBUG: User Prompt Length: {len(user_prompt)} chars")
-        
-        return system_prompt, user_prompt
-
-
-# ============================================================================
 # LLM INTEGRATION (Qwen2.5 3B Local via Ollama API)
 # ============================================================================
 
 class LocalLLMInterface:
-    """Interface with local Qwen2.5 3B model via Ollama API"""
+    """Interface with local db-assistant model via Ollama API"""
     
-    def __init__(self, model_name='qwen2.5:3b', api_url='http://localhost:11434'):
+    def __init__(self, model_name='db-assistant', api_url='http://localhost:11434'):
         self.model_name = model_name
         self.api_url = api_url
     
-    def generate(self, system_prompt: str, user_prompt: str, temperature: float = 0) -> str:
-        """Generate response using local Qwen2.5 model via Ollama API"""
+    def generate(self, user_prompt: str, temperature: float = 0) -> str:
+        """Generate response using the Modelfile's SYSTEM prompt automatically"""
         try:
-            full_prompt = f"{system_prompt}\n\n{user_prompt}"
-            
             payload = {
                 "model": self.model_name,
-                "prompt": full_prompt,
+                "prompt": user_prompt,
                 "stream": False,
                 "options": {
                     "temperature": temperature,
-                    "num_predict": 256
+                    "num_predict": 1024
                 },
-                "keep_alive": "5m"  # Keep model in memory for 5 mins after request
+                "keep_alive": "5m"
             }
-            
-            print(f"\n--- DATA SENDING TO LLM ---")
-            print(f"System Prompt: {system_prompt[:200]}...")
-            print(f"User Question: {user_prompt.split('User Question: ')[-1]}")
-            print(f"---------------------------\n")
 
             response = requests.post(
                 f"{self.api_url}/api/generate", 
@@ -394,7 +156,8 @@ class LocalLLMInterface:
             
             if response.status_code == 200:
                 result = response.json().get('response', '').strip()
-                print(f"--- RECEIVED FROM LLM ---\n{result}\n--------------------------")
+                # LOGGING: Print the raw output from LLM to terminal
+                print(f"🔹 LLM Generated Query:\n{result}\n")
                 return result
             else:
                 return f"ERROR: Ollama API returned {response.status_code}"
@@ -418,59 +181,44 @@ class ResponseFormatter:
             return f"Error executing query: {results['error']}"
         
         if not results:
-            return "No documents found matching your query."
+            return "❌ No result found in the database matching your search."
         
         count = len(results)
         response = f"Found {count} result{'s' if count != 1 else ''}:\n\n"
+
+        def format_value(k, v):
+            """Helper to format values based on key name and type"""
+            if isinstance(v, (int, float)):
+                # If it's a currency-like field
+                if any(x in k.lower() for x in ['spent', 'amount', 'price', 'revenue', 'sales', 'money']):
+                    return f"${v:,.2f}"
+                # If it's a large number
+                return f"{v:,}"
+            return str(v)
+
         # Format each result
         for i, doc in enumerate(results, 1):
-            # Special handling for aggregation results (single result with calculated fields)
-            if count == 1 and isinstance(doc, dict) and '_id' in doc and doc['_id'] is None:
-                # This is likely an aggregation result like { _id: null, total: 100 }
-                clean_doc = {k: v for k, v in doc.items() if k != '_id'}
-                response = "Analysis Result:\n"
-                for k, v in clean_doc.items():
-                    # Format numbers nicely
-                    if isinstance(v, (int, float)):
-                         if "price" in k.lower() or "spending" in k.lower() or "amount" in k.lower():
-                            response += f"• {k.replace('_', ' ').title()}: ${v:,.2f}\n"
-                         else:
-                            response += f"• {k.replace('_', ' ').title()}: {v:,}\n"
-                    else:
-                        response += f"• {k.replace('_', ' ').title()}: {v}\n"
-                return response
+            if not isinstance(doc, dict):
+                response += f"{i}. {str(doc)[:200]}\n"
+                continue
 
-            response += f"{i}. "
+            # Special treatment for aggregation results where _id is a month or category
+            # We want to label the _id field helpfully
+            parts = []
+            for k, v in doc.items():
+                if k == '_id':
+                    # If _id is the only field or it's a primitive, give it a generic label
+                    if len(doc) == 1 or not isinstance(v, (dict, list)):
+                        label = "Result"
+                        if "month" in user_question.lower(): label = "Month"
+                        if "year" in user_question.lower(): label = "Year"
+                        if "category" in user_question.lower(): label = "Category"
+                        parts.append(f"{label}: {format_value(k, v)}")
+                    continue
+                
+                parts.append(f"{k.replace('_', ' ').title()}: {format_value(k, v)}")
             
-            if isinstance(doc, dict):
-                key_fields = []
-                # Extended list of common fields
-                display_keys = [
-                    'name', 'title', 'email', 'username', 'product', 'status', 
-                    'value', 'amount', 'price', 'totalSales', 'orderCount', 
-                    'stock', 'inventory', 'quantity', 'category', 'role', 'city'
-                ]
-                
-                # Helper to flatten and check keys
-                def extract_relevant(d, prefix=""):
-                    found = []
-                    for k, v in d.items():
-                        if isinstance(v, dict):
-                            found.extend(extract_relevant(v, prefix + k + "."))
-                        elif k in display_keys or (prefix + k) in display_keys or 'name' in k.lower():
-                             found.append(f"{k}: {v}")
-                    return found
-                
-                key_fields = extract_relevant(doc)
-                
-                if key_fields:
-                    response += ", ".join(key_fields)
-                else:
-                    response += str(doc)[:200]
-            else:
-                response += str(doc)[:200]
-            
-            response += "\n"
+            response += f"{i}. {', '.join(parts)}\n"
         
         return response
 
@@ -487,7 +235,6 @@ class MongoDBChatAgent:
         
         # Initialize components
         self.db_connector = MongoDBConnector(mongodb_uri)
-        self.vector_search = VectorSearchEngine()
         self.llm = LocalLLMInterface()
         self.formatter = ResponseFormatter()
         
@@ -495,327 +242,274 @@ class MongoDBChatAgent:
         if not self.db_connector.connect(db_name):
             print("Warning: Failed to connect to MongoDB")
         
-        # Try Loading Embeddings first
-        if not self.vector_search.load_embeddings('embeddings.pkl'):
-            schema = self.db_connector.extract_schema()
-            self.embeddings = self.vector_search.generate_embeddings(schema)
-            self.vector_search.save_embeddings('embeddings.pkl')
-        else:
-            self.embeddings = self.vector_search.embeddings_db
-            
-        self.prompt_builder = PromptBuilder(self.embeddings, self.db_connector)
-        
-    def validate_query_fields(self, collection_name: str, query_data: any) -> Optional[str]:
-        """Validate that all fields in the query exist in the collection schema"""
-        if collection_name not in self.embeddings:
-            return None
-            
-        # Core fields from the database
-        db_fields = set(self.embeddings[collection_name]['fields'].keys())
-        
-        # Reserved MongoDB keywords and commonly used virtual field names
-        reserved_mongo_keys = {
-            'from', 'localField', 'foreignField', 'as', 'path', 'preserveNullAndEmptyArrays', 
-            'input', 'initialValue', 'in', 'cond', 'then', 'else', 'case', 'branches', 'default',
-            'filter', 'vars', 'body'
-        }
-        
-        # Allowed calculation aliases
-        generic_allowed = {'_id', 'id', 'count', 'total', 'avg', 'sum', 'min', 'max', 'revenue', 'spending', 'score'}
-        
-        virtual_fields = set()
 
-        def extract_fields(obj, is_definition_stage=False):
-            fields_found = []
-            if isinstance(obj, dict):
-                for k, v in obj.items():
-                    # If this is a $group, $project, or $addFields, the top-level keys ARE new fields
-                    if is_definition_stage and not k.startswith('$') and k != '_id':
-                        virtual_fields.add(k)
-                    
-                    # If it's a field name (not a $ operator and not a reserved keyword)
-                    if not k.startswith('$') and k not in reserved_mongo_keys:
-                        # Only treat it as a "field to validate" if it's not a definition
-                        if not is_definition_stage:
-                            fields_found.append(k)
-                    
-                    # Recurse into values
-                    fields_found.extend(extract_fields(v))
-            elif isinstance(obj, list):
-                for item in obj:
-                    fields_found.extend(extract_fields(item))
-            elif isinstance(obj, str) and obj.startswith('$'):
-                # Handle cases like "$customer_info.name" -> extract "customer_info"
-                cleaned = obj.lstrip('$').split('.')[0]
-                if cleaned not in reserved_mongo_keys:
-                    fields_found.append(cleaned)
-            return fields_found
-
-        if isinstance(query_data, list): # Aggregation
-            for stage in query_data:
-                if not stage: continue
-                op = list(stage.keys())[0]
-                
-                # Identify if this stage creates new fields
-                is_def = op in ['$group', '$project', '$addFields', '$set']
-                
-                # Special case for lookup
-                if op == '$lookup':
-                    as_val = stage[op].get('as')
-                    if as_val: virtual_fields.add(as_val)
-
-                # Extract and check fields
-                found_keys = extract_fields(stage[op], is_definition_stage=is_def)
-                for key in found_keys:
-                    root_key = key.split('.')[0]
-                    if (root_key not in db_fields and 
-                        root_key not in virtual_fields and 
-                        root_key not in generic_allowed and
-                        not root_key.startswith('$')):
-                        
-                        all_allowed = sorted(list(db_fields | generic_allowed))
-                        return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(all_allowed[:15])}..."
-        else: # Find Query
-            found_keys = extract_fields(query_data)
-            for key in found_keys:
-                root_key = key.split('.')[0]
-                if root_key not in db_fields and root_key not in generic_allowed:
-                    all_allowed = sorted(list(db_fields | generic_allowed))
-                    return f"❌ Hallucination Detected: Field '{key}' does not exist in '{collection_name}'. Available fields: {', '.join(all_allowed[:15])}..."
-        
-        return None
     def process_query(self, user_question: str) -> str:
-        """Process user query and return answer"""
-        
-        # Check for prohibited operations
-        prohibited_words = ['drop', 'delete', 'update', 'insert', 'modify', 'remove', 'truncate', 'alter']
-        if any(word in user_question.lower() for word in prohibited_words):
-            return "❌ Database modification queries are not allowed. You can only view/query data."
-        
-        # SMART JOIN DETECTION: Handle common cross-table queries with templates
-        question_lower = user_question.lower()
-        
-        # Pattern: Orders with Customer info
-        if ('order' in question_lower and any(word in question_lower for word in ['customer', 'user', 'client'])):
-            # Check if asking for customer details
-            if any(word in question_lower for word in ['name', 'email', 'detail', 'info']):
-                # Build join query automatically
-                match_filter = {}
-                if 'completed' in question_lower:
-                    match_filter['status'] = 'completed'
-                elif 'pending' in question_lower:
-                    match_filter['status'] = 'pending'
-                elif 'cancelled' in question_lower:
-                    match_filter['status'] = 'cancelled'
-                
-                pipeline = [
-                    {"$match": match_filter} if match_filter else {"$match": {}},
-                    {"$lookup": {
-                        "from": "customers",
-                        "localField": "customerId",
-                        "foreignField": "_id",
-                        "as": "customer_info"
-                    }},
-                    {"$unwind": {"path": "$customer_info", "preserveNullAndEmptyArrays": True}},
-                    {"$project": {
-                        "_id": 0,
-                        "status": 1,
-                        "amount": 1,
-                        "quantity": 1,
-                        "customer_name": "$customer_info.name",
-                        "customer_email": "$customer_info.email"
-                    }},
-                    {"$limit": 10}
-                ]
-                
-                try:
-                    results = list(self.db_connector.db['orders'].aggregate(pipeline))
-                    return self.formatter.format_results(results, user_question)
-                except Exception as e:
-                    # Fall through to LLM if template fails
-                    print(f"Template join failed: {e}, falling back to LLM")
-        
-        # Build prompt with relevant schema
-        schema_context, relevant_collections = self.prompt_builder.build_context(user_question)
-        
-        if schema_context == "NO_RELEVANT_COLLECTION":
-            return "❌ This question is not related to the database. Please ask something about the data in MongoDB."
-        
-        system_prompt, user_prompt = self.prompt_builder.get_reliable_prompt(user_question)
-        
-        # Get query from Qwen2.5
-        query_code = self.llm.generate(system_prompt, user_prompt, temperature=0)
-        
-        # DEBUG: Print query to terminal
-        print(f"\n🔹 MODEL OUTPUT:\n{query_code}\n")
-        
-        # Check for errors
+        """DIRECT FLOW: User -> LLM (Memory-based) -> DB Execution"""
+        # No system prompt needed - Ollama uses Modelfile
+        user_prompt = f"Question: {user_question}\nQuery:"
+
+        print(f"\n🚀 Step 1: LLM Processing user question...")
+        query_code = self.llm.generate(user_prompt, temperature=0)
+
         if "ERROR:" in query_code:
             return f"⚠ {query_code}"
-        
-        if "UNABLE_TO_QUERY" in query_code:
-            return "⚠ I cannot construct a valid query for this question with the available schema."
-        
-        if "MODIFICATION_NOT_ALLOWED" in query_code:
-            return "❌ Database modification is not allowed. This system is read-only."
-        
-        if "OUT_OF_SCOPE" in query_code:
-            return "❌ This question is not related to the database."
-        
-        if "OUT_OF_SCOPE" in query_code:
-            return "❌ This question is not related to the database."
 
-        # FLEXIBLE PARSING LOGIC
+        # 3. Clean & Extract the Code
         query_code = query_code.strip()
-        
-        # 1. Clean Markdown
         if "```" in query_code:
-            # Extract first code block
             blocks = re.findall(r'```(?:mongodb|json|python|javascript)?\s*(.*?)\s*```', query_code, re.DOTALL)
-            if blocks:
-                query_code = blocks[0].strip()
-        
-        results = []
-        collection_name = "Unknown"
-        
-        try:
-            # 2. Try to find the pattern db.collection.operation(...) or collection.operation(...)
-            # Note: collection name can include - or _ and we look for find, aggregate, countDocuments
-            match = re.search(r'(?:db\.)?([a-zA-Z0-9_\-]+)\.(find|aggregate|countDocuments|count)\s*\(', query_code)
-            
-            collection_name = None
-            operation = None
-            content = ""
-            
-            if match:
-                collection_name = match.group(1)
-                operation = match.group(2)
-                content = query_code[match.end():]
-                # Try to balance parentheses
-                stack = 1
-                end_pos = -1
-                for i, char in enumerate(content):
-                    if char == '(': stack += 1
-                    elif char == ')': stack -= 1
-                    if stack == 0:
-                        end_pos = i
-                        break
-                if end_pos != -1:
-                    content = content[:end_pos]
-            else:
-                # 3. Handle "Naked" output (just the JSON object or array)
-                # Guess collection from relevant_collections
-                if relevant_collections:
-                     collection_name = relevant_collections[0][0]
-                else:
-                     return f"⚠ No relevant collection found for query:\n{query_code}"
-                
-                if query_code.startswith('['):
-                    operation = 'aggregate'
-                    content = query_code
-                elif query_code.startswith('{'):
-                    operation = 'find'
-                    content = query_code
-                else:
-                    return f"⚠ Could not identify MongoDB command or valid JSON in response:\n{query_code}"
+            if blocks: query_code = blocks[0].strip()
 
-            # 4. Normalize JSON content
-            # Fix unquoted keys, handle single quotes, etc.
-            # Using a simplified version of the previous logic
-            def clean_json(s):
-                # 0. Flatten the string - remove ALL newlines and extra spaces
+        # 4. Parse Collection and Operation
+        # Try to find the pattern db.collection_name.operation(...)
+        match = re.search(r'(?:db\.)?([a-zA-Z0-9_\-]+)\.(find|aggregate|countDocuments|count)\s*\(', query_code)
+        
+        collection_name = None
+        operation = None
+        json_text = ""
+
+        if match:
+            collection_name = match.group(1)
+            operation = match.group(2)
+            # Extract content inside parentheses
+            start_idx = query_code.find('(', match.start()) + 1
+            stack = 1
+            end_idx = -1
+            for i in range(start_idx, len(query_code)):
+                if query_code[i] == '(': stack += 1
+                elif query_code[i] == ')': stack -= 1
+                if stack == 0:
+                    end_idx = i
+                    break
+            if end_idx != -1:
+                json_text = query_code[start_idx:end_idx].strip()
+        else:
+            # FALLBACK: Handle "Naked" output (just the JSON array or object)
+            query_code_clean = query_code.strip()
+            if query_code_clean.startswith('['):
+                operation = 'aggregate'
+                json_text = query_code_clean
+            elif query_code_clean.startswith('{'):
+                operation = 'find'
+                json_text = query_code_clean
+            
+            if operation:
+                # GUESS COLLECTION based on keywords in user question
+                q = user_question.lower()
+                if any(word in q for word in ['sale', 'revenue', 'order', 'month', 'transaction']):
+                    collection_name = "orders"
+                elif any(word in q for word in ['customer', 'user', 'client', 'buyer']):
+                    collection_name = "customers"
+                elif any(word in q for word in ['product', 'item', 'stock', 'inventory']):
+                    collection_name = "products"
+                elif 'payment' in q:
+                    collection_name = "payments"
+                else:
+                    collection_name = "orders" # Default fallback
+
+        if not collection_name or not operation:
+            return f"❌ AI returned invalid format. Please try again. Code received: {query_code[:100]}..."
+
+        print(f"✅ Step 2: Query Extracted -> Operation: {operation}")
+
+
+        # 5. Execute Directly
+        print(f"📊 Step 3: Executing Query on Collection: {collection_name}")
+        try:
+            # Quick syntax fix: Replace single quotes with double for JSON
+            # and unquoted keys (like name: ) with quoted keys ("name": )
+            def fix_json(s):
+                # 0. Multilingual & Character Fix: Translate Chinese leakage and stuttering
+                translations = {
+                    "从": "from", "作为": "as", "本地变量": "localField", 
+                    "外部变量": "foreignField", "匹配": "match", "分组": "group",
+                    "排序": "sort", "限制": "limit", "项目": "project"
+                }
+                for cn, en in translations.items(): s = s.replace(cn, en)
+                
+                # 0.5 HEAL STUTTERING (Remove vertical/horizontal spaces between letters in keywords)
+                # Catch: " m \n a \n x " or " m a x " -> "max"
+                def collapse_stutter(match):
+                    return '"' + match.group(0).replace(' ', '').replace('\n', '').replace('\r', '').replace('"', '') + '"'
+                
+                # Specifically targeting quoted words with spaces/newlines inside
+                s = re.sub(r'\"([a-zA-Z]\s+[a-zA-Z](?:\s+[a-zA-Z])*)\"', collapse_stutter, s)
+                s = re.sub(r'\"([a-zA-Z](?:\n+\s*[a-zA-Z])+)\"', collapse_stutter, s)
+
+                # 1. Strip artifacts like "mongodb" language labels
+                s = re.sub(r'^(mongodb|javascript|json|mongo|script)\s+', '', s, flags=re.IGNORECASE)
+
+                # 2. Strip JavaScript/MongoShell constructors
+                s = re.sub(r'new Date\((.*?)\)|ISODate\((.*?)\)|ObjectId\((.*?)\)', r'\1\2\3', s)
+                s = s.replace('new Date()', f'"{datetime.now().isoformat()}"')
+
+                # 3. Syntax Repair: Fix common LLM "double nesting" or broken roots
+                s = re.sub(r'\"\$\{\s*\"\$(?:replaceRoot|set|project)\".*?\"newRoot\":\s*\"(.*?)\".*?\}\}', r'"\1"', s)
+
+                # 4. Standard JSON cleaning
                 s = s.replace('\n', ' ').replace('\r', ' ')
                 s = re.sub(r'\s+', ' ', s).strip()
-
-                # 1. Standardize quotes
                 s = s.replace("'", '"')
                 
-                # 2. Add quotes ONLY to unquoted keys that do NOT start with $
-                # This regex matches: { key: or , key: but NOT "$key":
-                # It only adds quotes if the key is NOT already quoted
-                s = re.sub(r'([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', s)
-                
-                # 3. Fix missing '$' prefix in common MongoDB operators
-                # e.g. "match": -> "$match":
-                mongo_ops = ['match', 'group', 'sort', 'limit', 'project', 'unwind', 'lookup', 
-                            'sum', 'avg', 'count', 'max', 'min', 'expr', 'eq', 'gt', 'lt', 'gte', 'lte',
-                            'addFields', 'replaceRoot', 'out', 'skip']
+                # 5. Quote unquoted keys and string values
+                s = re.sub(r'([{,]\s*)([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:', r'\1"\2":', s)
+                s = re.sub(r':\s*([a-zA-Z_$][a-zA-Z0-9_$]*)(\s*[},])', r': "\1"\2', s)
+
+                # 6. Force $ prefix on pipeline STAGE and OPERATOR names ONLY
+                # DO NOT add $ to lookup sub-keys: from, as, localField, foreignField
+                mongo_ops = ['match', 'group', 'sort', 'limit', 'project', 'unwind', 'lookup',
+                             'sum', 'avg', 'max', 'min', 'push', 'addFields', 'exists', 'expr',
+                             'replaceRoot', 'count', 'first', 'last', 'addToSet']
+
                 for op in mongo_ops:
-                    # Only fix if NOT already prefixed with $
-                    s = re.sub(r'"(?!\$)' + op + r'"\s*:', r'"$' + op + r'":', s)
-                
-                # 4. Fix values that should have $ prefix (e.g., "customerId" -> "$customerId" in $group)
-                # This is handled by the AI, we don't touch values here
-                
-                # 5. Clean up any double-dollars we accidentally created
-                s = s.replace('"$$', '"$')
-                
-                # 6. Final bracket check
-                open_sq, close_sq = s.count('['), s.count(']')
-                if open_sq > close_sq: s += (open_sq - close_sq) * ']'
-                open_br, close_br = s.count('{'), s.count('}')
-                if open_br > close_br: s += (open_br - close_br) * '}'
+                    s = re.sub(r'\"(?!\$)' + op + r'\"\s*:', r'\"$' + op + r'\":', s)
                 
                 return s
 
-            clean_content = clean_json(content)
-            
-            try:
-                data = json.loads(clean_content)
-            except:
-                try:
-                    import ast
-                    data = ast.literal_eval(content)
-                except:
-                    return f"❌ Failed to parse query data: {content[:100]}..."
+            def convert_iso_dates(obj):
+                """Recursively look for ISO date strings and convert to datetime objects"""
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        obj[k] = convert_iso_dates(v)
+                elif isinstance(obj, list):
+                    return [convert_iso_dates(i) for i in obj]
+                elif isinstance(obj, str):
+                    # Check for ISO8601 format: 2024-01-01T... or 2024-01-01
+                    if len(obj) >= 10:
+                        # Very simple regex match for date-like string
+                        if re.match(r'^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2})?.*', obj):
+                            try:
+                                # Strip quotes if they were double-tripled during cleaning
+                                cleaned_date = obj.strip('"')
+                                # Parse to datetime - handles most common ISO formats
+                                # Replace Z with +00:00 for fromisoformat if needed
+                                dt_str = cleaned_date.replace('Z', '+00:00')
+                                return datetime.fromisoformat(dt_str)
+                            except:
+                                pass
+                return obj
 
-            # 5. Schema Guardrail: Validate Fields
-            validation_error = self.validate_query_fields(collection_name, data)
-            if validation_error:
-                print(f"🚩 SCHEMA GUARDRAIL TRIGGERED: {validation_error}")
-                # We could try to auto-retry here, but for now, we'll return the error
-                return f"{validation_error}\n\nAsk me again, but try to use fields from the schema list above."
+            def clean_string_values(obj):
+                """Recursively strip accidental double quotes from string values: '"value"' -> 'value'"""
+                if isinstance(obj, dict):
+                    return {k: clean_string_values(v) for k, v in obj.items()}
+                elif isinstance(obj, list):
+                    return [clean_string_values(i) for i in obj]
+                elif isinstance(obj, str):
+                    s = obj.strip()
+                    if s.startswith('"') and s.endswith('"') and len(s) >= 2:
+                        return s[1:-1]
+                    return s
+                return obj
 
-            # 6. Execute based on operation
-            if operation == 'find':
-                results = self.db_connector.execute_query(collection_name, data)
-            elif operation in ['countDocuments', 'count']:
-                count = self.db_connector.db[collection_name].count_documents(data if isinstance(data, dict) else {})
-                results = [{"count": count}]
-            elif operation == 'aggregate':
-                # Use the 'data' we already parsed successfully at line 760
-                pipeline = data if isinstance(data, list) else []
+            def make_case_insensitive(obj):
+                """Recursively convert plain string values to case-insensitive regex.
+                Excludes sensitive fields like username/password."""
+                sensitive_fields = {'username', 'password', 'pwd', 'secret', 'key', 'token', 'email'}
                 
-                if not pipeline:
-                     return f"⚠ Could not parse aggregation pipeline from AI response."
+                if isinstance(obj, list):
+                    # aggregate pipeline: look inside each $match stage
+                    result = []
+                    for stage in obj:
+                        if isinstance(stage, dict) and '$match' in stage:
+                            ci_match = {}
+                            for k, v in stage['$match'].items():
+                                # SKIP sensitive fields or already-regex fields
+                                is_sensitive = any(f in k.lower() for f in sensitive_fields)
+                                if isinstance(v, str) and not k.startswith('$') and not is_sensitive:
+                                    ci_match[k] = {'$regex': v, '$options': 'i'}
+                                else:
+                                    ci_match[k] = v
+                            result.append({'$match': ci_match})
+                        else:
+                            result.append(stage)
+                    return result
+                elif isinstance(obj, dict):
+                    # find filter: convert top-level string values
+                    ci_filter = {}
+                    for k, v in obj.items():
+                        is_sensitive = any(f in k.lower() for f in sensitive_fields)
+                        if isinstance(v, str) and not k.startswith('$') and not is_sensitive:
+                            ci_filter[k] = {'$regex': v, '$options': 'i'}
+                        else:
+                            ci_filter[k] = v
+                    return ci_filter
+                return obj
 
-                # INTELLIGENT PIPELINE REORDERING (Fixing 'Match before Unwind' bug)
-                # If we see LOOKUP -> MATCH -> UNWIND, we must swap Match and Unwind
-                for i in range(len(pipeline) - 1):
-                    stage_curr = list(pipeline[i].keys())[0]
-                    stage_next = list(pipeline[i+1].keys())[0]
-                    
-                    if stage_curr == '$match' and stage_next == '$unwind':
-                        # Check if match refers to a joined field (contains dot)
-                        match_query = pipeline[i]['$match']
-                        is_joined_field = any('.' in k for k in match_query.keys())
-                        
-                        if is_joined_field:
-                            # SWAP THEM!
-                            print("🔄 AUTO-FIXING PIPELINE: Swapping $match and $unwind")
-                            pipeline[i], pipeline[i+1] = pipeline[i+1], pipeline[i]
-
-                # Execute aggregate
-                # Increase safety limit to 50 (was 10) so user requests for "Top 20" work
-                results = list(self.db_connector.db[collection_name].aggregate(pipeline))[:50]
+            clean_json = fix_json(json_text)
+            print(f"🧹 Debug: Cleaned JSON for Parsing:\n{clean_json}\n")
+            data = json.loads(clean_json)
             
-            else:
-                return f"⚠ Could not identify MongoDB command (find/aggregate/countDocuments) in response:\n{query_code}"
-        
-        except Exception as e:
-            return f"❌ Query execution error: {str(e)}\n\nGenerated query was for '{collection_name}'"
+            # NEW: Clean string values to remove redundant quotes '"Mumbai"' -> 'Mumbai'
+            data = clean_string_values(data)
 
-        # Format results
-        formatted_response = self.formatter.format_results(results, user_question)
-        
-        return formatted_response
+            # CRITICAL: Convert strings to actual BSON Dates for comparison
+            data = convert_iso_dates(data)
+
+            # ── Execute with smart fallback chain ──────────────────────────────────
+            results = []
+            attempted = []
+
+            def try_execute(op, d, col):
+                """Run one operation and return results list or raise."""
+                if op == 'find':
+                    return list(self.db_connector.db[col].find(d).limit(10))
+                elif op == 'aggregate':
+                    return list(self.db_connector.db[col].aggregate(d))
+                elif op in ['count', 'countDocuments']:
+                    cnt = self.db_connector.db[col].count_documents(d if d else {})
+                    return [{'count': cnt}]
+                return []
+
+            # Step A: Run with original data
+            try:
+                results = try_execute(operation, data, collection_name)
+                attempted.append(f"{operation} (exact)")
+                print(f"▶ Executed as '{operation}' — got {len(results)} doc(s)")
+            except Exception as exec_err:
+                print(f"⚠ First attempt failed ({operation}): {exec_err}")
+                # If operation was 'find' but data is a list, switch to aggregate
+                if operation == 'find' and isinstance(data, list):
+                    try:
+                        results = try_execute('aggregate', data, collection_name)
+                        operation = 'aggregate'
+                        attempted.append("aggregate (auto-switched from find)")
+                        print(f"▶ Auto-switched to aggregate — got {len(results)} doc(s)")
+                    except Exception as e2:
+                        return f"❌ Execution Failed: {e2}\n\nQuery tried: {query_code}"
+                # If operation was 'aggregate' but data is a dict, switch to find
+                elif operation == 'aggregate' and isinstance(data, dict):
+                    try:
+                        results = try_execute('find', data, collection_name)
+                        operation = 'find'
+                        attempted.append("find (auto-switched from aggregate)")
+                        print(f"▶ Auto-switched to find — got {len(results)} doc(s)")
+                    except Exception as e2:
+                        return f"❌ Execution Failed: {e2}\n\nQuery tried: {query_code}"
+                else:
+                    return f"❌ Execution Failed: {exec_err}\n\nQuery tried: {query_code}"
+
+            # Step B: If no results, retry with case-insensitive matching
+            if not results and operation in ('find', 'aggregate'):
+                print(f"🔄 No results found — retrying with case-insensitive matching...")
+                try:
+                    ci_data = make_case_insensitive(copy.deepcopy(data))
+                    results = try_execute(operation, ci_data, collection_name)
+                    attempted.append(f"{operation} (case-insensitive retry)")
+                    print(f"▶ Case-insensitive retry — got {len(results)} doc(s)")
+                except Exception as ci_err:
+                    print(f"⚠ Case-insensitive retry failed: {ci_err}")
+
+            # Step C: Final check
+            if not results:
+                print(f"❌ All attempts returned 0 results. Tried: {' → '.join(attempted)}")
+                return (
+                    f"No documents found matching your query.\n"
+                    f"_Tried: {', '.join(attempted)}_\n"
+                    f"_Collection: `{collection_name}` | Filter used: `{json_text[:120]}`_"
+                )
+
+            return self.formatter.format_results(results, user_question)
+
+        except Exception as e:
+            return f"❌ Execution Failed: {str(e)}\n\nQuery tried: {query_code}"
