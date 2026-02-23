@@ -437,6 +437,14 @@ class MongoDBChatAgent:
                 return obj
 
             clean_json = fix_json(json_text)
+            
+            # Handle empty query strings (e.g., db.collection.find())
+            if not clean_json or clean_json.strip() == "":
+                if operation == 'aggregate':
+                    clean_json = "[]"
+                else:
+                    clean_json = "{}"
+            
             print(f"🧹 Debug: Cleaned JSON for Parsing:\n{clean_json}\n")
             data = json.loads(clean_json)
             
