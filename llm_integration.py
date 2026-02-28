@@ -20,7 +20,7 @@ class DateTimeEncoder(json.JSONEncoder):
 class OllamaLLM:
     """Ollama local LLM integration for natural language to MongoDB query conversion"""
     
-    def __init__(self, model_name="qwen2.5:3b", base_url="http://localhost:11434"):
+    def __init__(self, model_name="db-assistant", base_url="http://localhost:11434"):
         self.model_name = model_name
         self.base_url = base_url
         self.conversation_history = []
@@ -171,7 +171,9 @@ class OllamaLLM:
         target_schema = final_schema
         print(f"⚡ Router Selected: {list(final_schema.keys())}")
             
-        prompt = self._build_prompt(user_question, target_schema)
+        # Simplified prompt: No longer sending the massive schema metadata
+        # The 'db-assistant' model already has this knowledge baked in.
+        prompt = self._build_prompt(user_question)
         
         try:
             response = requests.post(
@@ -187,7 +189,7 @@ class OllamaLLM:
                         "stop": ["USER QUESTION:", "Question:"]
                     }
                 },
-                timeout=30
+                timeout=90
             )
             
             if response.status_code == 200:
@@ -252,10 +254,9 @@ Data:
             return "Analysis available (see table)."
         return "Analysis complete."
     
-    def _build_prompt(self, question: str, schema_info: Dict[str, Any]) -> str:
-        """Build context-aware prompt for query generation"""
+    def _build_prompt(self, question: str) -> str:
+        """Build a simplified prompt for the 'db-assistant' model"""
         
-        schema_description = self._format_schema(schema_info)
         current_year = datetime.now().year
         
         # Add conversation context if available
@@ -266,87 +267,13 @@ Data:
             for item in recent_context:
                 context += f"Q: {item['question']}\nA: {item['query']}\n"
         
-        prompt = f"""You are a database query planner and MongoDB Expert.
-
-Your task is to convert the user question into a valid MongoDB Aggregation Pipeline based on the metadata.
-
-Collection metadata:
-{schema_description}
-
-Definitions (Mental Model):
-- entity: the main object ($group _id)
-- measures: numeric values ($sum, $avg)
-- filters: conditions ($match)
-- grouping: how results are aggregated
-- sorting: order of results ($sort)
-- limit: number of records ($limit)
-
-Logic Rules (MANDATORY):
-- Comparative words (top, least, most, highest) REQUIRE grouping ($group)
-- Entity-level questions REQUIRE grouping by entity ($group by _id)
-- NEVER group everything into one result unless explicitly asked for totals
-- Time-based phrases (last year, today) MUST be captured as filters ($match)
-- Filter status: 'completed' for sales/revenue queries on 'orders'
-- Always use $lookup for foreign keys (productId -> name)
-- Current Year: {current_year}
-
-Output Rules:
-- Output ONLY valid JSON (MongoDB Pipeline list)
-- No explanations or comments
-- If query cannot be answered, return: []
-
-EXAMPLES:
-
-Question: "Show total sales this year"
-Answer: [
-  {{"$match": {{"status": "completed", "orderDate": {{"$gte": ISODate("{current_year}-01-01"), "$lt": ISODate("{current_year + 1}-01-01")}}}}}},
-  {{"$group": {{"_id": null, "totalSales": {{"$sum": "$amount"}}, "orderCount": {{"$sum": 1}}}}}},
-  {{"$project": {{"_id": 0, "totalSales": 1, "orderCount": 1}}}}
-]
-
-Question: "Top 5 products by revenue"
-Answer: [
-  {{"$match": {{"status": "completed"}}}},
-  {{"$group": {{"_id": "$productId", "totalRevenue": {{"$sum": "$amount"}}, "quantitySold": {{"$sum": "$quantity"}}}}}},
-  {{"$lookup": {{"from": "products", "localField": "_id", "foreignField": "_id", "as": "product"}}}},
-  {{"$unwind": "$product"}},
-  {{"$project": {{"productName": "$product.name", "totalRevenue": 1, "quantitySold": 1}}}},
-  {{"$sort": {{"totalRevenue": -1}}}},
-  {{"$limit": 5}}
-]
-
-Question: "Compare sales between 2024 and 2025 by month"
-Answer: [
-  {{"$match": {{"orderDate": {{"$gte": ISODate("2024-01-01"), "$lt": ISODate("2026-01-01")}}, "status": "completed"}}}},
-  {{"$group": {{
-      "_id": {{"year": {{"$year": "$orderDate"}}, "month": {{"$month": "$orderDate"}}}},
-      "totalSales": {{"$sum": "$amount"}}
-  }}}},
-  {{"$sort": {{"_id.year": 1, "_id.month": 1}}}}
-]
-
-Question: "Customers who spent most"
-Answer: [
-  {{"$match": {{"status": "completed"}}}},
-  {{"$group": {{"_id": "$customerId", "totalSpent": {{"$sum": "$amount"}}, "orderCount": {{"$sum": 1}}}}}},
-  {{"$lookup": {{"from": "customers", "localField": "_id", "foreignField": "_id", "as": "customer"}}}},
-  {{"$unwind": "$customer"}},
-  {{"$project": {{"customerName": "$customer.name", "customerCity": "$customer.city", "totalSpent": 1, "orderCount": 1}}}},
-  {{"$sort": {{"totalSpent": -1}}}},
-  {{"$limit": 10}}
-]
-
-Question: "Monthly sales trends"
-Answer: [
-  {{"$match": {{"status": "completed", "orderDate": {{"$gte": ISODate("{current_year}-01-01"), "$lt": ISODate("{current_year + 1}-01-01")}}}}}},
-  {{"$group": {{"_id": {{"$month": "$orderDate"}}, "totalSales": {{"$sum": "$amount"}}, "orderCount": {{"$sum": 1}}}}}},
-  {{"$project": {{"month": "$_id", "totalSales": 1, "orderCount": 1}}}},
-  {{"$sort": {{"month": 1}}}}
-]
+        prompt = f"""Task: Convert the User Question into a MongoDB Aggregation Pipeline.
+Current Year: {current_year}
 {context}
 USER QUESTION: "{question}"
-
 MongoDB Aggregation Pipeline:"""
+        
+        return prompt
         
         return prompt
     
@@ -429,8 +356,8 @@ class MultilingualLLM:
     """Multilingual support for database queries"""
     
     def __init__(self):
-        # Using qwen2.5:3b for all languages as it's multilingual capable
-        self.default_model = OllamaLLM("qwen2.5:3b")
+        # Using db-assistant for all languages
+        self.default_model = OllamaLLM("db-assistant")
         self.language_models = {
             'en': self.default_model,
             'es': self.default_model,
