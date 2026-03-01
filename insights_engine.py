@@ -15,41 +15,53 @@ from collections import Counter
 import streamlit as st
 
 # ═══════════════════════════════════════════════════════════════
-# PREMIUM CHART THEME
+# PREMIUM CHART THEME — unified via theme.py v2
 # ═══════════════════════════════════════════════════════════════
 
+from theme import (
+    CHART_COLORS, GREEN_100, TEXT_100, TEXT_200, TEXT_300,
+    BG_ELEVATED, BORDER_DIM, FONT_BASE, FONT_DISPLAY,
+    style_plotly_chart,
+)
+
+# Backwards-compatible aliases used throughout generators
 COLORS = {
-    "primary":    "#6C63FF",
-    "secondary":  "#00D9A6",
-    "accent":     "#FF6B8A",
-    "warning":    "#FFB347",
-    "info":       "#4FC3F7",
-    "success":    "#66BB6A",
-    "danger":     "#EF5350",
-    "muted":      "#78909C",
+    "primary":   CHART_COLORS[0],   # #00ed64 green
+    "secondary": CHART_COLORS[1],   # #3b82f6 blue
+    "accent":    CHART_COLORS[4],   # #f43f5e rose
+    "warning":   CHART_COLORS[2],   # #f59e0b amber
+    "info":      CHART_COLORS[5],   # #06b6d4 cyan
+    "success":   "#22c55e",
+    "danger":    "#ef4444",
+    "muted":     TEXT_300,
 }
 
-PALETTE = ["#6C63FF", "#00D9A6", "#FF6B8A", "#FFB347", "#4FC3F7",
-           "#AB47BC", "#26C6DA", "#FFA726", "#EC407A", "#66BB6A"]
-
-DARK_BG      = "rgba(0,0,0,0)"
-GRID_COLOR   = "rgba(255,255,255,0.06)"
-TEXT_COLOR    = "#E0E0E0"
-SUBTEXT      = "#9E9E9E"
+PALETTE     = CHART_COLORS
+DARK_BG     = "rgba(0,0,0,0)"
+GRID_COLOR  = "rgba(255,255,255,0.05)"
+TEXT_COLOR   = TEXT_100
+SUBTEXT     = TEXT_200
 
 
 def _apply_premium_layout(fig, title="", height=420, show_legend=True):
     """Apply consistent premium dark theme to any Plotly figure."""
     fig.update_layout(
-        title=dict(text=title, font=dict(size=16, color=TEXT_COLOR, family="Inter, sans-serif"), x=0.02, y=0.97),
+        title=dict(text=title,
+                   font=dict(size=14, color=TEXT_100, family=FONT_DISPLAY),
+                   x=0.0, y=1.0, xanchor="left", pad=dict(b=12)),
         paper_bgcolor=DARK_BG, plot_bgcolor=DARK_BG,
-        font=dict(color=TEXT_COLOR, family="Inter, sans-serif", size=12),
-        height=height, margin=dict(l=20, r=20, t=50, b=20),
+        font=dict(color=TEXT_200, family=FONT_BASE, size=12),
+        height=height, margin=dict(l=8, r=8, t=44, b=8),
         showlegend=show_legend,
-        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)",
-                    borderwidth=1, font=dict(size=11, color=SUBTEXT)),
-        xaxis=dict(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, tickfont=dict(color=SUBTEXT)),
-        yaxis=dict(gridcolor=GRID_COLOR, zerolinecolor=GRID_COLOR, tickfont=dict(color=SUBTEXT)),
+        colorway=CHART_COLORS,
+        legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor=BORDER_DIM,
+                    borderwidth=1, font=dict(size=11, color=TEXT_200)),
+        xaxis=dict(gridcolor=GRID_COLOR, zerolinecolor="rgba(255,255,255,0.08)",
+                   linecolor=BORDER_DIM, tickfont=dict(color=TEXT_300, size=11)),
+        yaxis=dict(gridcolor=GRID_COLOR, zerolinecolor="rgba(255,255,255,0.08)",
+                   linecolor=BORDER_DIM, tickfont=dict(color=TEXT_300, size=11)),
+        hoverlabel=dict(bgcolor=BG_ELEVATED, bordercolor="rgba(255,255,255,0.1)",
+                        font=dict(family=FONT_BASE, color=TEXT_100, size=12)),
     )
     return fig
 
