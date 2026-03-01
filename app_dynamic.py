@@ -1,3 +1,6 @@
+# app_dynamic.py — MongoDB AI Assistant
+# Premium dark SaaS dashboard — Linear / Atlas / Vercel inspired
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -13,219 +16,257 @@ from memory_manager import save_message, get_chat_history
 from database_config import config
 from pymongo import MongoClient
 
-# Initialize MongoDB connection for direct analytics
+from theme import (
+    inject_global_css, render_topbar, render_page_header, render_kpi_card,
+    render_divider, render_takeaway, render_section_header, render_badge,
+    style_plotly_chart,
+    BG_PAGE, BG_CARD, BG_INPUT, BG_ELEVATED,
+    BORDER_DIM, BORDER_STD, BORDER_GREEN,
+    TEXT_100, TEXT_200, TEXT_300, TEXT_400,
+    GREEN_100, GREEN_200, GREEN_BG, GREEN_RING,
+    STATUS_SUCCESS, STATUS_ERROR, CHART_COLORS,
+    FONT_BASE, FONT_DISPLAY, FONT_MONO,
+)
+
+# ═══════════════════════════════════════════════════════════════
+# DATABASE CONNECTION (unchanged)
+# ═══════════════════════════════════════════════════════════════
+
 @st.cache_resource
 def get_db_connection():
     client = MongoClient("mongodb://localhost:27017")
     return client["ai_test_db"]
 
+
 class DataAnalytics:
     def __init__(self):
         self.db = get_db_connection()
-    
+
     def get_yearly_sales_comparison(self):
-        """Compare sales between years"""
         pipeline = [
-            {
-                "$match": {
-                    "status": "completed",
-                    "orderDate": {"$exists": True}
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"$year": "$orderDate"},
-                    "totalSales": {"$sum": "$amount"},
-                    "orderCount": {"$sum": 1},
-                    "avgOrderValue": {"$avg": "$amount"}
-                }
-            },
-            {"$sort": {"_id": 1}}
+            {"$match": {"status": "completed", "orderDate": {"$exists": True}}},
+            {"$group": {
+                "_id": {"$year": "$orderDate"},
+                "totalSales": {"$sum": "$amount"},
+                "orderCount": {"$sum": 1},
+                "avgOrderValue": {"$avg": "$amount"},
+            }},
+            {"$sort": {"_id": 1}},
         ]
-        
         results = list(self.db.orders.aggregate(pipeline))
-        return pd.DataFrame(results).rename(columns={'_id': 'year'})
-    
+        return pd.DataFrame(results).rename(columns={"_id": "year"})
+
     def get_monthly_trends(self, year=2024):
-        """Get monthly sales trends for a specific year"""
         pipeline = [
-            {
-                "$match": {
-                    "status": "completed",
-                    "orderDate": {
-                        "$gte": datetime(year, 1, 1),
-                        "$lt": datetime(year + 1, 1, 1)
-                    }
-                }
-            },
-            {
-                "$group": {
-                    "_id": {"$month": "$orderDate"},
-                    "totalSales": {"$sum": "$amount"},
-                    "orderCount": {"$sum": 1}
-                }
-            },
-            {"$sort": {"_id": 1}}
+            {"$match": {
+                "status": "completed",
+                "orderDate": {"$gte": datetime(year, 1, 1), "$lt": datetime(year + 1, 1, 1)},
+            }},
+            {"$group": {
+                "_id": {"$month": "$orderDate"},
+                "totalSales": {"$sum": "$amount"},
+                "orderCount": {"$sum": 1},
+            }},
+            {"$sort": {"_id": 1}},
         ]
-        
         results = list(self.db.orders.aggregate(pipeline))
-        df = pd.DataFrame(results).rename(columns={'_id': 'month'})
-        
-        # Add month names
-        month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-                      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+        df = pd.DataFrame(results).rename(columns={"_id": "month"})
+        month_names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
         df['monthName'] = df['month'].apply(lambda x: month_names[x-1] if x <= 12 else str(x))
-        
         return df
-    
+
     def get_top_products(self, limit=10, year=None):
-        """Get top selling products"""
         match_stage = {"status": "completed"}
-        
         if year:
-            match_stage["orderDate"] = {
-                "$gte": datetime(year, 1, 1),
-                "$lt": datetime(year + 1, 1, 1)
-            }
-        
+            match_stage["orderDate"] = {"$gte": datetime(year, 1, 1), "$lt": datetime(year + 1, 1, 1)}
         pipeline = [
             {"$match": match_stage},
-            {
-                "$group": {
-                    "_id": "$productId",
-                    "totalSales": {"$sum": "$amount"},
-                    "quantitySold": {"$sum": "$quantity"},
-                    "orderCount": {"$sum": 1}
-                }
-            },
-            {
-                "$lookup": {
-                    "from": "products",
-                    "localField": "_id",
-                    "foreignField": "_id",
-                    "as": "product"
-                }
-            },
+            {"$group": {"_id": "$productId", "totalSales": {"$sum": "$amount"},
+                        "quantitySold": {"$sum": "$quantity"}, "orderCount": {"$sum": 1}}},
+            {"$lookup": {"from": "products", "localField": "_id", "foreignField": "_id", "as": "product"}},
             {"$unwind": "$product"},
-            {
-                "$project": {
-                    "productName": "$product.name",
-                    "totalSales": 1,
-                    "quantitySold": 1,
-                    "orderCount": 1
-                }
-            },
+            {"$project": {"productName": "$product.name", "totalSales": 1, "quantitySold": 1, "orderCount": 1}},
             {"$sort": {"totalSales": -1}},
-            {"$limit": limit}
+            {"$limit": limit},
         ]
-        
-        results = list(self.db.orders.aggregate(pipeline))
-        return pd.DataFrame(results)
-    
-    def get_customer_analysis(self):
-        """Analyze customer behavior"""
-        pipeline = [
-            {"$match": {"status": "completed"}},
-            {
-                "$group": {
-                    "_id": "$customerId",
-                    "totalSpent": {"$sum": "$amount"},
-                    "orderCount": {"$sum": 1},
-                    "avgOrderValue": {"$avg": "$amount"}
-                }
-            },
-            {
-                "$lookup": {
-                    "from": "customers",
-                    "localField": "_id",
-                    "foreignField": "_id",
-                    "as": "customer"
-                }
-            },
-            {"$unwind": "$customer"},
-            {
-                "$project": {
-                    "customerName": "$customer.name",
-                    "customerCity": "$customer.city",
-                    "totalSpent": 1,
-                    "orderCount": 1,
-                    "avgOrderValue": 1
-                }
-            },
-            {"$sort": {"totalSpent": -1}}
-        ]
-        
-        results = list(self.db.orders.aggregate(pipeline))
-        return pd.DataFrame(results)
-    
-    def get_city_wise_sales(self):
-        """Get sales by city"""
-        pipeline = [
-            {"$match": {"status": "completed"}},
-            {
-                "$lookup": {
-                    "from": "customers",
-                    "localField": "customerId",
-                    "foreignField": "_id",
-                    "as": "customer"
-                }
-            },
-            {"$unwind": "$customer"},
-            {
-                "$group": {
-                    "_id": "$customer.city",
-                    "totalSales": {"$sum": "$amount"},
-                    "orderCount": {"$sum": 1},
-                    "customerCount": {"$addToSet": "$customerId"}
-                }
-            },
-            {
-                "$project": {
-                    "city": "$_id",
-                    "totalSales": 1,
-                    "orderCount": 1,
-                    "customerCount": {"$size": "$customerCount"}
-                }
-            },
-            {"$sort": {"totalSales": -1}}
-        ]
-        
         results = list(self.db.orders.aggregate(pipeline))
         return pd.DataFrame(results)
 
-# Initialize analytics
+    def get_customer_analysis(self):
+        pipeline = [
+            {"$match": {"status": "completed"}},
+            {"$group": {"_id": "$customerId", "totalSpent": {"$sum": "$amount"},
+                        "orderCount": {"$sum": 1}, "avgOrderValue": {"$avg": "$amount"}}},
+            {"$lookup": {"from": "customers", "localField": "_id", "foreignField": "_id", "as": "customer"}},
+            {"$unwind": "$customer"},
+            {"$project": {"customerName": "$customer.name", "customerCity": "$customer.city",
+                          "totalSpent": 1, "orderCount": 1, "avgOrderValue": 1}},
+            {"$sort": {"totalSpent": -1}},
+        ]
+        results = list(self.db.orders.aggregate(pipeline))
+        return pd.DataFrame(results)
+
+    def get_city_wise_sales(self):
+        pipeline = [
+            {"$match": {"status": "completed"}},
+            {"$lookup": {"from": "customers", "localField": "customerId", "foreignField": "_id", "as": "customer"}},
+            {"$unwind": "$customer"},
+            {"$group": {"_id": "$customer.city", "totalSales": {"$sum": "$amount"},
+                        "orderCount": {"$sum": 1}, "customerCount": {"$addToSet": "$customerId"}}},
+            {"$project": {"city": "$_id", "totalSales": 1, "orderCount": 1,
+                          "customerCount": {"$size": "$customerCount"}}},
+            {"$sort": {"totalSales": -1}},
+        ]
+        results = list(self.db.orders.aggregate(pipeline))
+        return pd.DataFrame(results)
+
+
 analytics = DataAnalytics()
 
-st.set_page_config(page_title="AI Data Analytics", layout="wide")
-st.title("📊 AI Data Analytics Dashboard")
+# ═══════════════════════════════════════════════════════════════
+# PAGE CONFIG + CSS
+# ═══════════════════════════════════════════════════════════════
 
-# Sidebar for navigation
-st.sidebar.header("📈 Analytics Options")
-analysis_type = st.sidebar.selectbox(
-    "Choose Analysis Type",
-    ["Chat Interface", "Sales Comparison", "Monthly Trends", "Product Analysis", 
-     "Customer Insights", "Geographic Analysis", "🔍 AI Insights", "Custom Query", "AI Data Cleaning"]
+st.set_page_config(
+    page_title="MongoDB AI Assistant",
+    page_icon="🍃",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
+inject_global_css()
 
-if analysis_type == "Chat Interface":
-    st.subheader("💬 Chat with your data using natural language")
-    
-    # Show database info
+# ═══════════════════════════════════════════════════════════════
+# NAVIGATION
+# ═══════════════════════════════════════════════════════════════
+
+NAV_PAGES = [
+    ("chat",       "💬", "Chat",            "WORKSPACE"),
+    ("dashboard",  "📊", "Dashboard",       "WORKSPACE"),
+    ("explorer",   "🔍", "Data Explorer",   "WORKSPACE"),
+    ("insights",   "🧠", "AI Insights",     "WORKSPACE"),
+    ("comparison", "📈", "Sales Comparison", "ANALYTICS"),
+    ("trends",     "📅", "Monthly Trends",   "ANALYTICS"),
+    ("products",   "🛍️", "Products",         "ANALYTICS"),
+    ("customers",  "👥", "Customers",        "ANALYTICS"),
+    ("geographic", "🗺️", "Geographic",       "ANALYTICS"),
+    ("query",      "🔧", "Custom Query",     "TOOLS"),
+    ("cleaning",   "🧹", "Data Cleaning",    "TOOLS"),
+]
+
+PAGE_META = {
+    "chat":       ("💬", "Chat",              "Ask questions in natural language"),
+    "dashboard":  ("📊", "Dashboard",         "Key metrics at a glance"),
+    "explorer":   ("🔍", "Data Explorer",     "Browse collections and schema"),
+    "insights":   ("🧠", "AI Insights",       "Auto-generated insights from your data"),
+    "comparison": ("📈", "Sales Comparison",  "Year-over-year performance"),
+    "trends":     ("📅", "Monthly Trends",    "Seasonal patterns and growth"),
+    "products":   ("🛍️", "Products",          "Top performers by revenue & volume"),
+    "customers":  ("👥", "Customers",         "Behavior, segments, and lifetime value"),
+    "geographic": ("🗺️", "Geographic",        "Sales distribution by location"),
+    "query":      ("🔧", "Custom Query",      "Run MongoDB aggregation pipelines"),
+    "cleaning":   ("🧹", "Data Cleaning",     "AI-powered data quality fixes"),
+}
+
+if "page" not in st.session_state:
+    st.session_state.page = "chat"
+
+# ── DB connection check (cached) ──
+@st.cache_data(ttl=30)
+def _check_db():
+    try:
+        MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=1000).admin.command("ping")
+        return True
+    except Exception:
+        return False
+
+db_connected = _check_db()
+
+# ── Sidebar ────────────────────────────────────────────────────
+with st.sidebar:
+    st.html("""
+    <div class="sidebar-logo">
+      <span class="sidebar-logo-icon">🍃</span>
+      <div>
+        <div class="sidebar-logo-name">MongoDB</div>
+        <div class="sidebar-logo-sub">AI Assistant</div>
+      </div>
+    </div>
+    """)
+
+    current_section = None
+    for pid, icon, label, section in NAV_PAGES:
+        if section != current_section:
+            current_section = section
+            st.html(f'<div class="nav-section-label">{section}</div>')
+
+        is_active = st.session_state.page == pid
+        if st.button(
+            f"{icon}  {label}",
+            key=f"nav_{pid}",
+            use_container_width=True,
+            type="primary" if is_active else "secondary",
+        ):
+            st.session_state.page = pid
+            st.rerun()
+
+    st.html(f'<div style="height:1px;background:{BORDER_DIM};margin:12px 8px;"></div>')
+
+    # Connection status
+    if db_connected:
+        conn_html = f"""
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:8px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:{STATUS_SUCCESS};
+               box-shadow:0 0 6px rgba(34,197,94,0.6);flex-shrink:0;"></div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:{TEXT_100};">Connected</div>
+            <div style="font-size:10px;color:{TEXT_300};">ai_test_db</div>
+          </div>
+        </div>"""
+    else:
+        conn_html = f"""
+        <div style="padding:12px 16px;display:flex;align-items:center;gap:8px;">
+          <div style="width:7px;height:7px;border-radius:50%;background:{STATUS_ERROR};flex-shrink:0;"></div>
+          <div style="font-size:11px;font-weight:600;color:{STATUS_ERROR};">Disconnected</div>
+        </div>"""
+    st.html(conn_html)
+
+# ── Top bar ────────────────────────────────────────────────────
+_icon, _title, _subtitle = PAGE_META.get(st.session_state.page, ("📄", "Page", ""))
+st.html(render_topbar(_icon, _title, _subtitle, db_connected))
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE ROUTING
+# ═══════════════════════════════════════════════════════════════
+
+page = st.session_state.page
+
+
+# ── CHAT ───────────────────────────────────────────────────────
+if page == "chat":
+    # Sidebar extras for chat page
     with st.sidebar:
-        st.header("Database Info")
-        metadata = extract_metadata()
-        st.write(f"**Domain:** {config.domain.title()}")
-        st.write(f"**Database:** {config.database_name}")
-        st.write("**Collections:**")
-        for collection, info in metadata.items():
-            field_count = len(info.get('fields', {}))
-            st.write(f"- {collection} ({field_count} fields)")
+        with st.expander("🗄️ Database"):
+            metadata = extract_metadata()
+            st.markdown(f"**Domain:** {config.domain.title()}")
+            st.markdown(f"**Database:** {config.database_name}")
+            st.markdown("**Collections:**")
+            for coll_name, info in metadata.items():
+                field_count = len(info.get("fields", {}))
+                st.markdown(f"- `{coll_name}` ({field_count} fields)")
+
+        with st.expander("💡 Try asking..."):
+            example_qs = [
+                "Show total sales this year",
+                "Who are our top 10 customers?",
+                "Compare sales by location",
+                "What's our average order value?",
+                "Show me seasonal sales patterns",
+            ]
+            for eq in example_qs:
+                st.markdown(f"- {eq}")
 
         # Documentation Download
-        st.markdown("---")
-        st.header("📚 Documentation")
-        import glob
-        import os
+        import glob, os
         pdf_files = glob.glob("Chat_Database_Architecture_*.pdf")
         if pdf_files:
             latest_pdf = max(pdf_files, key=os.path.getctime)
@@ -233,312 +274,380 @@ if analysis_type == "Chat Interface":
                 with open(latest_pdf, "rb") as f:
                     pdf_data = f.read()
                 st.download_button(
-                    label="⬇️ Download Architecture PDF",
+                    label="⬇️ Architecture PDF",
                     data=pdf_data,
                     file_name="AI_Database_Architecture.pdf",
-                    mime="application/pdf"
+                    mime="application/pdf",
                 )
-            except Exception as e:
-                st.error(f"Could not load PDF: {e}")
+            except Exception:
+                pass
+
+        if st.button("🗑️ Clear Chat", use_container_width=True):
+            st.session_state.messages = []
+            st.rerun()
+
     if "messages" not in st.session_state:
         st.session_state.messages = []
 
-    # Display history
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+    # Session info strip
+    msg_count = len(st.session_state.messages)
+    st.html(f"""
+    <div style="display:flex;justify-content:space-between;align-items:center;
+                padding:8px 24px;font-size:12px;color:{TEXT_300};">
+      <span>{msg_count} message{'s' if msg_count != 1 else ''} in session</span>
+    </div>""")
 
-    # User Input
+    # Chat history
+    if st.session_state.messages:
+        rows_html = ""
+        for msg in st.session_state.messages:
+            role = msg["role"]
+            content = msg["content"].replace("<", "&lt;").replace(">", "&gt;").replace("\n", "<br>")
+            avatar_icon = "Y" if role == "user" else "🍃"
+            rows_html += f"""
+            <div class="chat-row {role}">
+              <div class="chat-avatar {role}">{avatar_icon}</div>
+              <div class="chat-bubble {role}">{content}</div>
+            </div>"""
+        st.html(f'<div class="chat-messages">{rows_html}</div>')
+
+    # Chat input
     if user_input := st.chat_input("Ask anything about your data..."):
-        # Display user message
-        st.chat_message("user").markdown(user_input)
+        st.session_state.messages.append({"role": "user", "content": user_input})
         save_message("user", user_input)
 
-        with st.spinner("Analyzing your data (Qwen2.5 + Vector Search)..."):
+        with st.spinner("Analyzing your data..."):
             try:
                 try:
-                    # Use the new MongoDBChatAgent
                     from mongo_chat_agent import MongoDBChatAgent
                 except ImportError as e:
                     if "sentence_transformers" in str(e):
-                        raise ImportError("System is installing AI libraries (sentence-transformers). This takes a few minutes. Please wait and refresh the page.")
+                        raise ImportError("System is installing AI libraries (sentence-transformers). Please wait and refresh.")
                     raise e
-                
-                # Cache the agent to avoid reloading embeddings per query
-                # But reload if embeddings.pkl changes
-                import os
-                embeddings_mtime = os.path.getmtime('embeddings.pkl') if os.path.exists('embeddings.pkl') else 0
-                
+
+                import os as _os
+                embeddings_mtime = _os.path.getmtime("embeddings.pkl") if _os.path.exists("embeddings.pkl") else 0
+
                 @st.cache_resource
                 def get_agent(_cache_key):
                     return MongoDBChatAgent()
-                
-                agent = get_agent(embeddings_mtime)
-                
-                friendly_answer = agent.process_query(user_input)
-                
-            except ImportError as ie:
-                friendly_answer = f"⏳ {str(ie)}"
-                
-            except Exception as e:
-                friendly_answer = f"Sorry, I encountered an error: {str(e)}"
-            
-        # Display assistant message
-        with st.chat_message("assistant"):
-            st.markdown(friendly_answer)
-            
-        save_message("assistant", friendly_answer)
-        st.session_state.messages.append({"role": "user", "content": user_input})
-        st.session_state.messages.append({"role": "assistant", "content": friendly_answer})
 
-elif analysis_type == "Sales Comparison":
-    st.subheader("📊 Year-over-Year Sales Comparison")
-    
-    # Get yearly data
+                agent = get_agent(embeddings_mtime)
+                friendly_answer = agent.process_query(user_input)
+            except ImportError as ie:
+                friendly_answer = f"⏳ {ie}"
+            except Exception as e:
+                friendly_answer = f"Sorry, I encountered an error: {e}"
+
+        save_message("assistant", friendly_answer)
+        st.session_state.messages.append({"role": "assistant", "content": friendly_answer})
+        st.rerun()
+
+
+# ── DASHBOARD ──────────────────────────────────────────────────
+elif page == "dashboard":
+    st.html(render_page_header("Dashboard", "Overview of your business data at a glance", "📊"))
+
+    try:
+        yearly_data = analytics.get_yearly_sales_comparison()
+        if not yearly_data.empty:
+            latest = yearly_data.iloc[-1]
+
+            # KPI row
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.html(render_kpi_card(f"${latest['totalSales']:,.0f}", "Total Sales"))
+            with col2:
+                st.html(render_kpi_card(f"{latest['orderCount']:,}", "Total Orders"))
+            with col3:
+                st.html(render_kpi_card(f"${latest['avgOrderValue']:.2f}", "Avg Order Value"))
+            with col4:
+                customer_data = analytics.get_customer_analysis()
+                st.html(render_kpi_card(f"{len(customer_data):,}", "Active Customers"))
+
+            # Charts row
+            col1, col2 = st.columns(2)
+            with col1:
+                try:
+                    monthly = analytics.get_monthly_trends(int(latest['year']))
+                    if not monthly.empty:
+                        fig = px.area(monthly, x='monthName', y='totalSales',
+                                      title='Monthly Revenue Trend')
+                        fig.update_traces(line=dict(width=2.5, color=GREEN_100),
+                                          fillcolor="rgba(0,237,100,0.06)")
+                        style_plotly_chart(fig)
+                        st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+                except Exception:
+                    fig = px.bar(yearly_data, x='year', y='totalSales', title='Total Sales by Year')
+                    fig.update_traces(texttemplate='$%{y:,.0f}', textposition='outside',
+                                      marker=dict(opacity=0.9, line=dict(width=0)))
+                    style_plotly_chart(fig)
+                    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
+            with col2:
+                top_prods = analytics.get_top_products(5)
+                if not top_prods.empty:
+                    fig2 = px.bar(top_prods, x='totalSales', y='productName',
+                                  orientation='h', title='Top 5 Products')
+                    fig2.update_traces(texttemplate='$%{x:,.0f}', textposition='outside',
+                                       marker=dict(opacity=0.9, line=dict(width=0)))
+                    style_plotly_chart(fig2, height=380)
+                    st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+        else:
+            st.info("No sales data available yet.")
+    except Exception as e:
+        st.warning(f"Could not load dashboard data: {e}")
+
+
+# ── DATA EXPLORER ──────────────────────────────────────────────
+elif page == "explorer":
+    st.html(render_page_header("Data Explorer", "Browse raw collections and documents", "🔍"))
+
+    collection_name = st.selectbox("Select Collection",
+                                   ["orders", "customers", "products", "categories", "payments", "reviews"])
+    try:
+        db = get_db_connection()
+        docs = list(db[collection_name].find().limit(100))
+        if docs:
+            df = pd.DataFrame(docs)
+            if '_id' in df.columns:
+                df['_id'] = df['_id'].astype(str)
+            st.html(render_divider(f"{len(docs)} documents"))
+            st.dataframe(df, use_container_width=True)
+        else:
+            st.info("No documents found in this collection.")
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+
+
+# ── SALES COMPARISON ──────────────────────────────────────────
+elif page == "comparison":
+    st.html(render_page_header("Sales Comparison", "Year-over-year sales performance analysis", "📈"))
+
     yearly_data = analytics.get_yearly_sales_comparison()
-    
     if not yearly_data.empty:
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Sales comparison chart
-            fig = px.bar(yearly_data, x='year', y='totalSales', 
-                        title='Total Sales by Year',
-                        labels={'totalSales': 'Total Sales ($)', 'year': 'Year'})
-            fig.update_traces(texttemplate='$%{y:,.0f}', textposition='outside')
-            st.plotly_chart(fig, use_container_width=True)
-        
+            fig = px.bar(yearly_data, x='year', y='totalSales', title='Total Sales by Year',
+                         labels={'totalSales': 'Total Sales ($)', 'year': 'Year'})
+            fig.update_traces(texttemplate='$%{y:,.0f}', textposition='outside',
+                              marker=dict(opacity=0.9, line=dict(width=0)))
+            style_plotly_chart(fig)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with col2:
-            # Order count comparison
-            fig2 = px.line(yearly_data, x='year', y='orderCount', 
-                          title='Order Count by Year', markers=True)
-            fig2.update_traces(texttemplate='%{y}', textposition='top center')
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # Growth calculation
+            fig2 = px.line(yearly_data, x='year', y='orderCount', title='Order Count by Year', markers=True)
+            fig2.update_traces(texttemplate='%{y}', textposition='top center',
+                               line=dict(width=2.5))
+            style_plotly_chart(fig2)
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
         if len(yearly_data) >= 2:
-            current_year = yearly_data.iloc[-1]
-            previous_year = yearly_data.iloc[-2]
-            
-            sales_growth = ((current_year['totalSales'] - previous_year['totalSales']) / previous_year['totalSales']) * 100
-            order_growth = ((current_year['orderCount'] - previous_year['orderCount']) / previous_year['orderCount']) * 100
-            
+            cur = yearly_data.iloc[-1]
+            prev = yearly_data.iloc[-2]
+            sg = ((cur['totalSales'] - prev['totalSales']) / prev['totalSales']) * 100
+            og = ((cur['orderCount'] - prev['orderCount']) / prev['orderCount']) * 100
+            ag = (cur['avgOrderValue'] - prev['avgOrderValue']) / prev['avgOrderValue'] * 100
+
             col1, col2, col3 = st.columns(3)
             with col1:
-                st.metric("Sales Growth", f"{sales_growth:.1f}%", 
-                         f"${current_year['totalSales'] - previous_year['totalSales']:,.0f}")
+                dt = "up" if sg >= 0 else "down"
+                st.html(render_kpi_card(f"{sg:.1f}%", "Sales Growth",
+                                         f"${cur['totalSales'] - prev['totalSales']:,.0f}", dt))
             with col2:
-                st.metric("Order Growth", f"{order_growth:.1f}%", 
-                         f"{current_year['orderCount'] - previous_year['orderCount']:,}")
+                dt = "up" if og >= 0 else "down"
+                st.html(render_kpi_card(f"{og:.1f}%", "Order Growth",
+                                         f"{cur['orderCount'] - prev['orderCount']:,}", dt))
             with col3:
-                avg_growth = (current_year['avgOrderValue'] - previous_year['avgOrderValue']) / previous_year['avgOrderValue'] * 100
-                st.metric("Avg Order Value Growth", f"{avg_growth:.1f}%", 
-                         f"${current_year['avgOrderValue'] - previous_year['avgOrderValue']:.2f}")
-        
-        # Data table
-        st.subheader("📋 Detailed Yearly Data")
-        yearly_data['totalSales'] = yearly_data['totalSales'].apply(lambda x: f"${x:,.2f}")
-        yearly_data['avgOrderValue'] = yearly_data['avgOrderValue'].apply(lambda x: f"${x:.2f}")
-        st.dataframe(yearly_data, use_container_width=True)
+                dt = "up" if ag >= 0 else "down"
+                st.html(render_kpi_card(f"{ag:.1f}%", "AOV Growth",
+                                         f"${cur['avgOrderValue'] - prev['avgOrderValue']:.2f}", dt))
+
+        st.html(render_divider("Detailed Yearly Data"))
+        disp = yearly_data.copy()
+        disp['totalSales'] = disp['totalSales'].apply(lambda x: f"${x:,.2f}")
+        disp['avgOrderValue'] = disp['avgOrderValue'].apply(lambda x: f"${x:.2f}")
+        st.dataframe(disp, use_container_width=True)
     else:
         st.warning("No sales data found for comparison.")
 
-elif analysis_type == "Monthly Trends":
-    st.subheader("📈 Monthly Sales Trends")
-    
-    # Year selector
+
+# ── MONTHLY TRENDS ─────────────────────────────────────────────
+elif page == "trends":
+    st.html(render_page_header("Monthly Trends", "Monthly sales and order patterns", "📅"))
+
     available_years = analytics.get_yearly_sales_comparison()['year'].tolist()
     if available_years:
         selected_year = st.selectbox("Select Year", available_years, index=len(available_years)-1)
     else:
-        st.warning("No data available for yearly analysis")
+        st.warning("No data available.")
         selected_year = None
-    
+
     if selected_year:
         monthly_data = analytics.get_monthly_trends(selected_year)
-        
         if not monthly_data.empty:
             col1, col2 = st.columns(2)
-            
             with col1:
-                # Monthly sales trend
-                fig = px.line(monthly_data, x='monthName', y='totalSales', 
-                             title=f'Monthly Sales Trend - {selected_year}',
-                             markers=True)
-                fig.update_traces(texttemplate='$%{y:,.0f}', textposition='top center')
-                st.plotly_chart(fig, use_container_width=True)
-            
+                fig = px.area(monthly_data, x='monthName', y='totalSales',
+                              title=f'Monthly Sales Trend — {selected_year}')
+                fig.update_traces(line=dict(width=2.5, color=GREEN_100),
+                                  fillcolor="rgba(0,237,100,0.06)")
+                style_plotly_chart(fig)
+                st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
             with col2:
-                # Monthly order count
                 fig2 = px.bar(monthly_data, x='monthName', y='orderCount',
-                             title=f'Monthly Order Count - {selected_year}')
-                fig2.update_traces(texttemplate='%{y}', textposition='outside')
-                st.plotly_chart(fig2, use_container_width=True)
-            
-            # Monthly statistics
+                              title=f'Monthly Orders — {selected_year}')
+                fig2.update_traces(texttemplate='%{y}', textposition='outside',
+                                   marker=dict(opacity=0.9, line=dict(width=0)))
+                style_plotly_chart(fig2)
+                st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Best Month (Sales)", 
-                         monthly_data.loc[monthly_data['totalSales'].idxmax(), 'monthName'],
-                         f"${monthly_data['totalSales'].max():,.0f}")
+                best = monthly_data.loc[monthly_data['totalSales'].idxmax(), 'monthName']
+                st.html(render_kpi_card(best, "Best Month",
+                         f"${monthly_data['totalSales'].max():,.0f}", "up"))
             with col2:
-                st.metric("Worst Month (Sales)", 
-                         monthly_data.loc[monthly_data['totalSales'].idxmin(), 'monthName'],
-                         f"${monthly_data['totalSales'].min():,.0f}")
+                worst = monthly_data.loc[monthly_data['totalSales'].idxmin(), 'monthName']
+                st.html(render_kpi_card(worst, "Worst Month",
+                         f"${monthly_data['totalSales'].min():,.0f}", "down"))
             with col3:
-                st.metric("Average Monthly Sales", 
-                         f"${monthly_data['totalSales'].mean():,.0f}")
+                st.html(render_kpi_card(f"${monthly_data['totalSales'].mean():,.0f}", "Avg Monthly"))
             with col4:
-                st.metric("Total Orders", f"{monthly_data['orderCount'].sum():,}")
-            
-            # Data table
-            st.subheader("📋 Monthly Breakdown")
-            display_data = monthly_data.copy()
-            display_data['totalSales'] = display_data['totalSales'].apply(lambda x: f"${x:,.2f}")
-            st.dataframe(display_data, use_container_width=True)
+                st.html(render_kpi_card(f"{monthly_data['orderCount'].sum():,}", "Total Orders"))
 
-elif analysis_type == "Product Analysis":
-    st.subheader("🛍️ Product Performance Analysis")
-    
+            st.html(render_divider("Monthly Breakdown"))
+            disp = monthly_data.copy()
+            disp['totalSales'] = disp['totalSales'].apply(lambda x: f"${x:,.2f}")
+            st.dataframe(disp, use_container_width=True)
+
+
+# ── PRODUCTS ───────────────────────────────────────────────────
+elif page == "products":
+    st.html(render_page_header("Products", "Product performance and sales analysis", "🛍️"))
+
     col1, col2 = st.columns(2)
     with col1:
-        product_limit = st.slider("Number of products to show", 5, 50, 10)
+        product_limit = st.slider("Products to show", 5, 50, 10)
     with col2:
-        year_filter = st.selectbox("Filter by year", ["All Years"] + analytics.get_yearly_sales_comparison()['year'].tolist())
-    
+        year_filter = st.selectbox("Filter by year",
+                                   ["All Years"] + analytics.get_yearly_sales_comparison()['year'].tolist())
+
     year = None if year_filter == "All Years" else year_filter
     top_products = analytics.get_top_products(product_limit, year)
-    
+
     if not top_products.empty:
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Top products by sales
-            fig = px.bar(top_products.head(10), x='totalSales', y='productName', 
-                        orientation='h', title='Top Products by Sales Revenue')
-            fig.update_traces(texttemplate='$%{x:,.0f}', textposition='outside')
-            st.plotly_chart(fig, use_container_width=True)
-        
+            fig = px.bar(top_products.head(10), x='totalSales', y='productName',
+                         orientation='h', title='Top Products by Revenue')
+            fig.update_traces(texttemplate='$%{x:,.0f}', textposition='outside',
+                              marker=dict(opacity=0.9, line=dict(width=0)))
+            style_plotly_chart(fig)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with col2:
-            # Top products by quantity
             fig2 = px.bar(top_products.head(10), x='quantitySold', y='productName',
-                         orientation='h', title='Top Products by Quantity Sold')
-            fig2.update_traces(texttemplate='%{x}', textposition='outside')
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # Product performance metrics
+                          orientation='h', title='Top Products by Quantity')
+            fig2.update_traces(texttemplate='%{x}', textposition='outside',
+                               marker=dict(opacity=0.9, line=dict(width=0)))
+            style_plotly_chart(fig2)
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Best Selling Product", 
-                     top_products.iloc[0]['productName'],
-                     f"${top_products.iloc[0]['totalSales']:,.0f}")
+            st.html(render_kpi_card(
+                str(top_products.iloc[0]['productName']), "Best Seller",
+                f"${top_products.iloc[0]['totalSales']:,.0f}", "up"))
         with col2:
-            avg_sales = top_products['totalSales'].mean()
-            st.metric("Average Product Sales", f"${avg_sales:,.0f}")
+            st.html(render_kpi_card(f"${top_products['totalSales'].mean():,.0f}", "Avg Product Sales"))
         with col3:
-            total_products = len(top_products)
-            st.metric("Products Analyzed", f"{total_products}")
-        
-        # Detailed product table
-        st.subheader("📋 Detailed Product Performance")
-        display_products = top_products.copy()
-        display_products['totalSales'] = display_products['totalSales'].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(display_products, use_container_width=True)
+            st.html(render_kpi_card(f"{len(top_products)}", "Products Analyzed"))
 
-elif analysis_type == "Customer Insights":
-    st.subheader("👥 Customer Analysis")
-    
+        st.html(render_divider("Product Details"))
+        disp = top_products.copy()
+        disp['totalSales'] = disp['totalSales'].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(disp, use_container_width=True)
+
+
+# ── CUSTOMERS ──────────────────────────────────────────────────
+elif page == "customers":
+    st.html(render_page_header("Customers", "Behavior, segments, and lifetime value", "👥"))
+
     customer_data = analytics.get_customer_analysis()
-    
     if not customer_data.empty:
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Top customers by spending
-            top_customers = customer_data.head(10)
-            fig = px.bar(top_customers, x='totalSpent', y='customerName',
-                        orientation='h', title='Top 10 Customers by Spending')
-            fig.update_traces(texttemplate='$%{x:,.0f}', textposition='outside')
-            st.plotly_chart(fig, use_container_width=True)
-        
+            fig = px.bar(customer_data.head(10), x='totalSpent', y='customerName',
+                         orientation='h', title='Top 10 Customers by Spending')
+            fig.update_traces(texttemplate='$%{x:,.0f}', textposition='outside',
+                              marker=dict(opacity=0.9, line=dict(width=0)))
+            style_plotly_chart(fig)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with col2:
-            # Customer spending distribution
             fig2 = px.histogram(customer_data, x='totalSpent', nbins=20,
-                               title='Customer Spending Distribution')
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # Customer metrics
+                                title='Spending Distribution')
+            fig2.update_traces(marker=dict(opacity=0.85, line=dict(width=0)))
+            style_plotly_chart(fig2)
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("Total Customers", f"{len(customer_data):,}")
+            st.html(render_kpi_card(f"{len(customer_data):,}", "Total Customers"))
         with col2:
-            avg_spending = customer_data['totalSpent'].mean()
-            st.metric("Avg Customer Value", f"${avg_spending:,.2f}")
+            st.html(render_kpi_card(f"${customer_data['totalSpent'].mean():,.2f}", "Avg CLV"))
         with col3:
-            top_customer_spending = customer_data['totalSpent'].max()
-            st.metric("Top Customer Spending", f"${top_customer_spending:,.2f}")
+            st.html(render_kpi_card(f"${customer_data['totalSpent'].max():,.2f}", "Top Spender"))
         with col4:
-            avg_orders = customer_data['orderCount'].mean()
-            st.metric("Avg Orders per Customer", f"{avg_orders:.1f}")
-        
-        # Customer segmentation
-        st.subheader("🎯 Customer Segmentation")
-        
-        # Create spending segments
-        customer_data['segment'] = pd.cut(customer_data['totalSpent'], 
-                                        bins=3, labels=['Low Value', 'Medium Value', 'High Value'])
-        
-        segment_summary = customer_data.groupby('segment').agg({
-            'totalSpent': ['count', 'mean', 'sum'],
-            'orderCount': 'mean'
-        }).round(2)
-        
-        st.dataframe(segment_summary, use_container_width=True)
+            st.html(render_kpi_card(f"{customer_data['orderCount'].mean():.1f}", "Avg Orders"))
 
-elif analysis_type == "Geographic Analysis":
-    st.subheader("🗺️ Geographic Sales Analysis")
-    
+        st.html(render_divider("Customer Segmentation"))
+        customer_data['segment'] = pd.cut(customer_data['totalSpent'],
+                                          bins=3, labels=['Low Value', 'Medium Value', 'High Value'])
+        seg = customer_data.groupby('segment').agg({
+            'totalSpent': ['count', 'mean', 'sum'], 'orderCount': 'mean'
+        }).round(2)
+        st.dataframe(seg, use_container_width=True)
+
+
+# ── GEOGRAPHIC ─────────────────────────────────────────────────
+elif page == "geographic":
+    st.html(render_page_header("Geographic", "Sales distribution by location", "🗺️"))
+
     city_data = analytics.get_city_wise_sales()
-    
     if not city_data.empty:
         col1, col2 = st.columns(2)
-        
         with col1:
-            # Sales by city
             fig = px.pie(city_data, values='totalSales', names='city',
-                        title='Sales Distribution by City')
-            st.plotly_chart(fig, use_container_width=True)
-        
+                         title='Sales by City', hole=0.55)
+            fig.update_traces(textfont=dict(color=TEXT_100))
+            style_plotly_chart(fig)
+            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
         with col2:
-            # Customer count by city
-            fig2 = px.bar(city_data, x='city', y='customerCount',
-                         title='Customer Count by City')
-            fig2.update_traces(texttemplate='%{y}', textposition='outside')
-            st.plotly_chart(fig2, use_container_width=True)
-        
-        # Geographic metrics
+            fig2 = px.bar(city_data, x='city', y='customerCount', title='Customers by City')
+            fig2.update_traces(texttemplate='%{y}', textposition='outside',
+                               marker=dict(opacity=0.9, line=dict(width=0)))
+            style_plotly_chart(fig2)
+            st.plotly_chart(fig2, use_container_width=True, config={"displayModeBar": False})
+
         col1, col2, col3 = st.columns(3)
         with col1:
             top_city = city_data.iloc[0]
-            st.metric("Top City by Sales", 
-                     top_city['city'],
-                     f"${top_city['totalSales']:,.0f}")
+            st.html(render_kpi_card(str(top_city['city']), "Top City",
+                                     f"${top_city['totalSales']:,.0f}", "up"))
         with col2:
-            total_cities = len(city_data)
-            st.metric("Cities Served", f"{total_cities}")
+            st.html(render_kpi_card(f"{len(city_data)}", "Cities Served"))
         with col3:
-            avg_city_sales = city_data['totalSales'].mean()
-            st.metric("Avg Sales per City", f"${avg_city_sales:,.0f}")
-        
-        # City performance table
-        st.subheader("📋 City Performance Details")
-        display_cities = city_data.copy()
-        display_cities['totalSales'] = display_cities['totalSales'].apply(lambda x: f"${x:,.2f}")
-        st.dataframe(display_cities, use_container_width=True)
+            st.html(render_kpi_card(f"${city_data['totalSales'].mean():,.0f}", "Avg per City"))
 
-elif analysis_type == "🔍 AI Insights":
-    st.subheader("🔍 AI-Powered Business Insights")
-    st.caption("Auto-generated actionable insights from your data — no queries needed. Works with **any** database.")
+        st.html(render_divider("City Details"))
+        disp = city_data.copy()
+        disp['totalSales'] = disp['totalSales'].apply(lambda x: f"${x:,.2f}")
+        st.dataframe(disp, use_container_width=True)
+
+
+# ── AI INSIGHTS ────────────────────────────────────────────────
+elif page == "insights":
+    st.html(render_page_header("AI Insights",
+                                "Auto-generated actionable insights — works with any database", "🧠"))
 
     from insights_engine import UniversalInsightsEngine
 
@@ -548,14 +657,25 @@ elif analysis_type == "🔍 AI Insights":
 
     engine = get_universal_engine()
 
-    def render_kpi_metrics(metrics_dict):
+    CATEGORY_BADGES = {
+        "distribution": ("#3b82f6", "Distribution"),
+        "histogram":    ("#a78bfa", "Histogram"),
+        "group_avg":    ("#f59e0b", "Avg by Group"),
+        "top_n":        ("#f43f5e", "Top N"),
+        "time_trend":   ("#00ed64", "Trend"),
+        "correlation":  ("#06b6d4", "Correlation"),
+        "count_trend":  ("#84cc16", "Volume"),
+    }
+
+    def render_insight_kpis(metrics_dict):
         if not metrics_dict:
             return
         cols = st.columns(min(len(metrics_dict), 4))
         for col, (label, value) in zip(cols, metrics_dict.items()):
-            col.metric(label, value)
+            with col:
+                st.html(render_kpi_card(str(value), label))
 
-    tab_auto, tab_custom = st.tabs(["📌 Auto Insights", "💬 Request Custom Insight"])
+    tab_auto, tab_custom = st.tabs(["✨ Auto Insights", "🔎 Request Insight"])
 
     with tab_auto:
         with st.spinner("🔍 Scanning database and generating insights..."):
@@ -564,13 +684,11 @@ elif analysis_type == "🔍 AI Insights":
         if not top_insights:
             st.warning("No insights could be generated from the current database.")
         else:
-            st.success(f"✨ Found **{len(top_insights)}** key insights from your database!")
+            st.html(render_takeaway(f"Found **{len(top_insights)}** key insights from your database!"))
 
-            # Schema overview
-            with st.expander("🗄️ Discovered Database Schema"):
+            with st.expander("🗄️ Discovered Schema"):
                 st.markdown(engine.get_schema_summary())
 
-            # Render insights in 2-column grid
             for i in range(0, len(top_insights), 2):
                 cols = st.columns(2)
                 for j, col in enumerate(cols):
@@ -579,239 +697,181 @@ elif analysis_type == "🔍 AI Insights":
                         break
                     ins = top_insights[idx]
                     with col:
-                        with st.container(border=True):
-                            if ins.metrics:
-                                render_kpi_metrics(ins.metrics)
-                            if ins.fig:
-                                st.plotly_chart(ins.fig, use_container_width=True,
-                                                config={"displayModeBar": False})
-                            st.success(f"💡 {ins.takeaway}")
+                        badge_color, badge_label = CATEGORY_BADGES.get(
+                            ins.category, ("#94a3b8", ins.category))
+                        st.html(f"""<div class="insight-card">
+                            {render_badge(badge_label, badge_color)}
+                            <div style="font-size:13px;font-weight:600;color:{TEXT_100};
+                                        margin-top:8px;">{ins.title}</div>
+                        </div>""")
+                        if ins.metrics:
+                            render_insight_kpis(ins.metrics)
+                        if ins.fig:
+                            style_plotly_chart(ins.fig, height=380)
+                            st.plotly_chart(ins.fig, use_container_width=True,
+                                            config={"displayModeBar": False})
+                        st.html(render_takeaway(ins.takeaway))
 
     with tab_custom:
-        # Show discovered schema for guidance
         with st.expander("📋 Available Collections & Fields", expanded=False):
             st.markdown(engine.get_schema_summary())
 
         st.markdown(
             "Ask a question about your data and get an **instant visual insight**.\n\n"
             "**Try things like:**\n"
-            "- *Show [field] distribution*\n"
-            "- *[field] trend over time*\n"
-            "- *Top [collection] by [numeric field]*\n"
-            "- *Average [numeric field] by [category]*\n"
-            "- *Correlation between [field A] and [field B]*"
+            "- *Show status distribution*\n"
+            "- *Amount trend over time*\n"
+            "- *Top products by price*\n"
+            "- *Average amount by category*\n"
+            "- *Correlation between price and quantity*"
         )
         custom_q = st.text_input("🔎 What insight do you want?",
-                                 placeholder="e.g. Show status distribution, or Top products by price")
+                                 placeholder="e.g. Show status distribution")
         if st.button("Generate Insight", type="primary", use_container_width=True):
             if custom_q.strip():
                 with st.spinner("Generating your insight..."):
                     c_fig, c_take, c_df = engine.generate_custom_insight(custom_q)
                 if c_fig:
+                    style_plotly_chart(c_fig)
                     st.plotly_chart(c_fig, use_container_width=True, config={"displayModeBar": False})
-                st.success(f"💡 {c_take}")
+                st.html(render_takeaway(c_take))
                 if c_df is not None and not c_df.empty:
                     with st.expander("📋 View raw data"):
                         st.dataframe(c_df, use_container_width=True)
             else:
-                st.warning("Please enter a question to generate an insight.")
+                st.warning("Please enter a question.")
 
-elif analysis_type == "Custom Query":
-    st.subheader("🔧 Custom MongoDB Query")
-    
-    st.write("Enter your custom MongoDB aggregation pipeline:")
-    
-    # Sample queries
+
+# ── CUSTOM QUERY ───────────────────────────────────────────────
+elif page == "query":
+    st.html(render_page_header("Custom Query", "Run MongoDB aggregation pipelines directly", "🔧"))
+
     sample_queries = {
         "Daily Sales Last 30 Days": '''[
-    {
-        "$match": {
-            "status": "completed"
-        }
-    },
-    {
-        "$group": {
-            "_id": {
-                "$dateToString": {
-                    "format": "%Y-%m-%d",
-                    "date": "$orderDate"
-                }
-            },
-            "dailySales": {"$sum": "$amount"},
-            "orderCount": {"$sum": 1}
-        }
-    },
+    {"$match": {"status": "completed"}},
+    {"$group": {
+        "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$orderDate"}},
+        "dailySales": {"$sum": "$amount"},
+        "orderCount": {"$sum": 1}
+    }},
     {"$sort": {"_id": 1}}
 ]''',
         "Product Category Analysis": '''[
-    {
-        "$lookup": {
-            "from": "products",
-            "localField": "productId",
-            "foreignField": "_id",
-            "as": "product"
-        }
-    },
+    {"$lookup": {"from": "products", "localField": "productId", "foreignField": "_id", "as": "product"}},
     {"$unwind": "$product"},
-    {
-        "$lookup": {
-            "from": "categories",
-            "localField": "product.categoryId",
-            "foreignField": "_id",
-            "as": "category"
-        }
-    },
+    {"$lookup": {"from": "categories", "localField": "product.categoryId", "foreignField": "_id", "as": "category"}},
     {"$unwind": "$category"},
-    {
-        "$group": {
-            "_id": "$category.name",
-            "totalSales": {"$sum": "$amount"},
-            "productCount": {"$addToSet": "$productId"}
-        }
-    },
-    {
-        "$project": {
-            "categoryName": "$_id",
-            "totalSales": 1,
-            "productCount": {"$size": "$productCount"}
-        }
+    {"$group": {
+        "_id": "$category.name",
+        "totalSales": {"$sum": "$amount"},
+        "productCount": {"$addToSet": "$productId"}
+    }},
+    {"$project": {
+        "categoryName": "$_id",
+        "totalSales": 1,
+        "productCount": {"$size": "$productCount"}
+    }}
+]''',
     }
-]'''
-    }
-    
-    selected_sample = st.selectbox("Choose a sample query", ["Custom"] + list(sample_queries.keys()))
-    
-    if selected_sample != "Custom":
-        query_text = sample_queries[selected_sample]
-    else:
-        query_text = ""
-    
-    custom_query = st.text_area("MongoDB Aggregation Pipeline", 
-                               value=query_text, 
-                               height=200,
-                               help="Enter a valid MongoDB aggregation pipeline as JSON array")
-    
-    collection_name = st.selectbox("Select Collection", 
-                                  ["orders", "customers", "products", "categories", "payments", "reviews"])
-    
-    if st.button("Execute Query"):
-        if custom_query.strip():
-            try:
-                import json
-                # Parse the query
-                pipeline = json.loads(custom_query)
-                
-                # Execute the query
-                collection = analytics.db[collection_name]
-                results = list(collection.aggregate(pipeline))
-                
-                if results:
-                    st.success(f"Query executed successfully! Found {len(results)} results.")
-                    
-                    # Convert to DataFrame for better display
-                    df = pd.DataFrame(results)
-                    
-                    # Show results
-                    st.subheader("📊 Query Results")
-                    st.dataframe(df, use_container_width=True)
-                    
-                    # Try to create a simple visualization if possible
-                    if len(df.columns) >= 2:
-                        numeric_cols = df.select_dtypes(include=[np.number]).columns
-                        if len(numeric_cols) > 0:
-                            st.subheader("📈 Quick Visualization")
-                            
-                            # Simple bar chart
-                            if len(df) <= 20:  # Only for reasonable number of rows
+
+    col_left, col_right = st.columns([2, 3])
+
+    with col_left:
+        selected_sample = st.selectbox("Sample query", ["Custom"] + list(sample_queries.keys()))
+        query_text = sample_queries.get(selected_sample, "")
+        custom_query = st.text_area("Aggregation Pipeline", value=query_text, height=250,
+                                    help="Enter a valid JSON array")
+        collection_name = st.selectbox("Collection",
+                                       ["orders", "customers", "products", "categories", "payments", "reviews"])
+        run_btn = st.button("▶ Execute Query", type="primary", use_container_width=True)
+
+    with col_right:
+        if run_btn:
+            if custom_query.strip():
+                try:
+                    import json
+                    pipeline = json.loads(custom_query)
+                    collection = analytics.db[collection_name]
+                    results = list(collection.aggregate(pipeline))
+
+                    if results:
+                        st.html(render_takeaway(f"Query returned {len(results)} results"))
+                        df = pd.DataFrame(results)
+
+                        if len(df.columns) >= 2:
+                            numeric_cols = df.select_dtypes(include=[np.number]).columns
+                            if len(numeric_cols) > 0 and len(df) <= 20:
                                 x_col = df.columns[0]
                                 y_col = numeric_cols[0]
-                                
                                 fig = px.bar(df.head(10), x=x_col, y=y_col,
-                                           title=f"{y_col} by {x_col}")
-                                st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.warning("Query executed but returned no results.")
-                    
-            except json.JSONDecodeError:
-                st.error("Invalid JSON format. Please check your query syntax.")
-            except Exception as e:
-                st.error(f"Query execution failed: {str(e)}")
+                                             title=f"{y_col} by {x_col}")
+                                fig.update_traces(marker=dict(opacity=0.9, line=dict(width=0)))
+                                style_plotly_chart(fig)
+                                st.plotly_chart(fig, use_container_width=True,
+                                                config={"displayModeBar": False})
+
+                        st.html(render_divider("Raw Results"))
+                        st.dataframe(df, use_container_width=True)
+                    else:
+                        st.warning("Query returned no results.")
+                except json.JSONDecodeError:
+                    st.error("Invalid JSON format.")
+                except Exception as e:
+                    st.error(f"Query failed: {e}")
+            else:
+                st.warning("Please enter a query.")
         else:
-            st.warning("Please enter a query to execute.")
+            st.html(f"""
+            <div style="display:flex;align-items:center;justify-content:center;
+                        height:300px;color:{TEXT_300};font-size:13px;">
+                Write a pipeline and click Execute to see results here
+            </div>""")
 
 
+# ── DATA CLEANING ──────────────────────────────────────────────
+elif page == "cleaning":
+    st.html(render_page_header("Data Cleaning", "AI-powered data quality scanning and automated cleaning", "🧹"))
+    st.info("The AI Agent scans your data, identifies issues, and cleans them automatically.")
 
-elif analysis_type == "AI Data Cleaning":
-    st.subheader("🧹 AI-Powered Data Cleaning")
-    st.info("The AI Agent will scan your data, identify issues (duplicates, formatting), and clean them automatically.")
-    
     from database_cleaner_executor import cleaning_executor
-    
-    # 1. Select Collection
+
     collections = cleaning_executor.get_collections()
     selected_collection = st.selectbox("Select Collection to Clean", collections)
-    
+
     if "cleaning_plan" not in st.session_state:
         st.session_state.cleaning_plan = None
-        
-    # 2. Scan Button
-    if st.button("🔍 Scan & Generate Cleaning Plan"):
+
+    if st.button("🔍 Scan & Generate Cleaning Plan", type="primary"):
         with st.spinner("Analyzing data patterns..."):
             plan = cleaning_executor.generate_plan(selected_collection)
             st.session_state.cleaning_plan = plan
-            
-    # 3. Review & Execute
+
     if st.session_state.cleaning_plan:
         plan = st.session_state.cleaning_plan
-        
         if "error" in plan:
             st.error(plan["error"])
         else:
-            st.subheader("📝 Proposed Cleaning Logic")
-            
+            st.html(render_section_header("Proposed Cleaning Logic", "Review before executing"))
+
             col1, col2 = st.columns(2)
             with col1:
                 st.write("**Sample Data (Before):**")
                 st.json(plan["samples"])
             with col2:
-                st.write("**Proposed Cleaning Pipeline (JSON):**")
+                st.write("**Proposed Pipeline:**")
                 st.code(plan["code"], language="python")
-                
+
             st.warning("⚠️ This will modify your database directly. Review the code above.")
-            
+
             if st.button("🚀 Confirm & Run Cleaning"):
                 with st.spinner("Executing cleaning script..."):
                     result = cleaning_executor.execute_cleaning(plan["code"], selected_collection)
-                    
                     if result["success"]:
-                        st.success("✅ Cleaning Complete!")
+                        st.html(render_takeaway("✅ Cleaning Complete!"))
                         st.json(result["summary"])
-                        st.session_state.cleaning_plan = None # Reset
+                        st.session_state.cleaning_plan = None
                     else:
                         st.error(f"❌ Execution Failed: {result.get('error')}")
                         if "traceback" in result:
                             with st.expander("Error Details"):
                                 st.code(result["traceback"])
-
-# Example queries sidebar
-st.sidebar.header("💡 Try These Intelligent Queries")
-examples = [
-    "Show total sales this year",
-    "Which items sold least this month?",
-    "Who are our top 10 customers by spending?",
-    "Show me seasonal sales patterns",
-    "Which customers haven't ordered recently?",
-    "Compare sales by location",
-    "What's our average order value?",
-    "Show me declining products",
-    "Customer lifetime value analysis",
-    "Monthly sales trends"
-]
-
-for example in examples:
-    if st.sidebar.button(example, key=f"example_{example}"):
-        if analysis_type == "Chat Interface":
-            st.session_state.messages.append({"role": "user", "content": example})
-            st.rerun()
-        else:
-            st.sidebar.info("Switch to 'Chat Interface' to use these queries")
