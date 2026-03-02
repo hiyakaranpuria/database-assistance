@@ -11,12 +11,30 @@ echo ""
 echo "================================================================"
 echo ""
 
-# Ask user if they want to install Ollama
+# ALWAYS run complete setup first (for identity verification and MongoDB config)
+if [ -f "/app/complete_setup.py" ]; then
+    echo "🔧 Running complete setup..."
+    echo "   (Identity verification, OTP, MongoDB configuration)"
+    echo ""
+    python /app/complete_setup.py
+    
+    if [ $? -ne 0 ]; then
+        echo ""
+        echo "❌ Setup failed. Please check the configuration."
+        exit 1
+    fi
+fi
+
+# Ask user if they want to install Ollama (AFTER setup is complete)
+echo ""
+echo "================================================================"
 echo "🤖 Do you want to install Ollama for AI-powered queries?"
 echo "   (Ollama enables natural language MongoDB queries)"
+echo "   Note: This will download ~2.5GB"
 echo ""
 read -p "Install Ollama? (y/n): " -n 1 -r
 echo ""
+echo "================================================================"
 
 if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Install Ollama if not already installed
@@ -42,17 +60,11 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         fi
         sleep 1
     done
-
-    # Run the complete setup if it exists
-    if [ -f "/app/complete_setup.py" ]; then
-        echo ""
-        echo "🔧 Running complete setup..."
-        python /app/complete_setup.py
-    fi
+    
+    echo "✅ AI features enabled!"
 else
     echo "⏭️  Skipping Ollama installation"
-    echo "   You can still use the app without AI features"
-    echo ""
+    echo "   App will run without AI query features"
 fi
 
 # Launch the app
@@ -60,6 +72,8 @@ echo ""
 echo "================================================================"
 echo "        Launching MongoDB Assistance Application"
 echo "================================================================"
+echo ""
+echo "🌐 Access the app at: http://localhost:8501"
 echo ""
 
 # Try to run app_dynamic.py, fallback to MONGODB_AI_CHAT.py
