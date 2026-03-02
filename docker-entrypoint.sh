@@ -11,6 +11,13 @@ echo ""
 echo "================================================================"
 echo ""
 
+# Install Ollama if not already installed
+if ! command -v ollama &> /dev/null; then
+    echo "📥 Installing Ollama..."
+    curl -fsSL https://ollama.com/install.sh | sh
+    echo "✅ Ollama installed!"
+fi
+
 # Start Ollama service in background
 echo "🚀 Starting Ollama service..."
 ollama serve > /dev/null 2>&1 &
@@ -26,21 +33,26 @@ for i in {1..30}; do
     sleep 1
 done
 
-# Run the complete setup
-echo ""
-echo "🔧 Running complete setup..."
-python /app/complete_setup.py
+# Run the complete setup if it exists
+if [ -f "/app/complete_setup.py" ]; then
+    echo ""
+    echo "🔧 Running complete setup..."
+    python /app/complete_setup.py
+fi
 
-# If setup successful, launch the app
-if [ $? -eq 0 ]; then
-    echo ""
-    echo "================================================================"
-    echo "        Launching MongoDB Assistance Application"
-    echo "================================================================"
-    echo ""
+# Launch the app
+echo ""
+echo "================================================================"
+echo "        Launching MongoDB Assistance Application"
+echo "================================================================"
+echo ""
+
+# Try to run app_dynamic.py, fallback to MONGODB_AI_CHAT.py
+if [ -f "/app/app_dynamic.py" ]; then
     exec streamlit run /app/app_dynamic.py --server.port=8501 --server.address=0.0.0.0
+elif [ -f "/app/MONGODB_AI_CHAT.py" ]; then
+    exec streamlit run /app/MONGODB_AI_CHAT.py --server.port=8501 --server.address=0.0.0.0
 else
-    echo ""
-    echo "❌ Setup failed. Please check the logs above."
+    echo "❌ No Streamlit app found!"
     exit 1
 fi

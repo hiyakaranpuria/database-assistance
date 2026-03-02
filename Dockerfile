@@ -25,8 +25,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ollama
-RUN curl -fsSL https://ollama.com/install.sh | sh
+# Note: Ollama will be installed at runtime via entrypoint script
 
 # Create app directory
 WORKDIR /app
