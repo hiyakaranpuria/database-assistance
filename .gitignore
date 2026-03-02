@@ -4,33 +4,51 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
+env/
+venv/
 *.egg-info/
-.installed.cfg
-*.egg
+dist/
+build/
 
-# Environment variables
+# Environment
 .env
+.env.local
+.env.production
 
-# Backups and data
-database_backup/
-database_backup.tar.gz
-data_quality_report.json
-database_info.json
-
-# IDEs
+# IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+.DS_Store
+
+# Logs and data
+*.log
+logs/
+*.pkl
+*.cache
+*.json
+embeddings.pkl
+database_info.json
+data_quality_report.json
+chat_examples.json
+
+# Node modules (if any)
+node_modules/
+db-assistance/node_modules/
+package-lock.json
+
+# Database dumps
+*.bson
+*.dump
+
+# Temporary
+*.tmp
+temp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Git
+.git/
