@@ -1,0 +1,90 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Test and debug files
+test_*.py
+*_test.py
+check_*.py
+debug_*.py
+probe_*.py
+diagnostic.py
+
+# Documentation
+*.md
+docs/
+README*.md
+SETUP*.md
+QUICKSTART.md
+
+# Logs and data
+*.log
+logs/
+*.pkl
+*.cache
+*.json
+embeddings.pkl
+database_info.json
+data_quality_report.json
+chat_examples.json
+
+# Database dumps
+*.bson
+*.dump
+
+# Temporary
+*.tmp
+temp/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Node modules (if any)
+node_modules/
+package*.json
+
+# Batch files
+*.bat
+
+# Unnecessary Python files
+setup.py
+setup_*.py
+seed_*.py
+export_*.py
+import_*.py
+sync_*.py
+run_*.py
+generate_*.py
+highest_*.py
+
+# Old/unused files
+simple_*.py
+mongodb_*.py
+mongo_*.js
+individual_*.md
+improvement_*.md
