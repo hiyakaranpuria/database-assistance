@@ -30,15 +30,28 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy all files first (excluding what's in .dockerignore)
-COPY . .
-
-# Overwrite with minimal requirements for Docker
+# Copy requirements first (Docker cache optimization)
 COPY requirements-docker.txt ./requirements.txt
 
-# Install Python dependencies
+# Install Python dependencies (only 7 packages)
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
+
+# Copy only the files actually needed by the application
+COPY complete_setup.py .
+COPY docker-entrypoint.sh .
+COPY app_dynamic.py .
+COPY insights_engine.py .
+COPY theme.py .
+COPY metadata_provider.py .
+COPY enhanced_query_engine.py .
+COPY dynamic_query_generator.py .
+COPY dynamic_query_executor.py .
+COPY enhanced_response_formatter.py .
+COPY memory_manager.py .
+COPY database_config.py .
+COPY llm_integration.py .
+COPY Modelfile .
 
 # Create necessary directories
 RUN mkdir -p /app/logs /app/.streamlit
@@ -61,8 +74,7 @@ backgroundColor = "#0f172a"\n\
 secondaryBackgroundColor = "#1e293b"\n\
 textColor = "#f1f5f9"\n' > /app/.streamlit/config.toml
 
-# Copy and make entrypoint executable
-COPY docker-entrypoint.sh .
+# Make entrypoint executable
 RUN chmod +x /app/docker-entrypoint.sh
 
 # Expose Streamlit port

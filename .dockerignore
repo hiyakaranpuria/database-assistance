@@ -26,6 +26,11 @@ build/
 .git/
 .gitignore
 
+# Exclude heavy requirements files (use requirements-docker.txt instead)
+requirements.txt
+requirements-dev.txt
+requirements-minimal.txt
+
 # Test and debug files
 test_*.py
 *_test.py
