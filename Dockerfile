@@ -33,11 +33,8 @@ WORKDIR /app
 # Copy only required files for Docker
 COPY requirements-docker.txt ./requirements.txt
 
-# Copy all Python files (this will copy everything that exists)
-COPY *.py .
-
-# Copy Modelfile if it exists
-COPY Modelfile* . 2>/dev/null || true
+# Copy all files (excluding what's in .dockerignore)
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
