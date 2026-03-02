@@ -33,22 +33,12 @@ WORKDIR /app
 
 # Copy only required files for Docker
 COPY requirements-docker.txt ./requirements.txt
-COPY complete_setup.py .
-COPY check_model.py .
-COPY verify_key.py .
-COPY verify_otp.py .
-COPY app_dynamic.py .
-COPY insights_engine.py .
-COPY theme.py .
-COPY metadata_provider.py .
-COPY enhanced_query_engine.py .
-COPY dynamic_query_generator.py .
-COPY dynamic_query_executor.py .
-COPY enhanced_response_formatter.py .
-COPY memory_manager.py .
-COPY database_config.py .
-COPY llm_integration.py .
-COPY Modelfile .
+
+# Copy all Python files (this will copy everything that exists)
+COPY *.py .
+
+# Copy Modelfile if it exists
+COPY Modelfile* . 2>/dev/null || true
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
