@@ -30,11 +30,11 @@ RUN apt-get update && apt-get install -y \
 # Create app directory
 WORKDIR /app
 
-# Copy only required files for Docker
-COPY requirements-docker.txt ./requirements.txt
-
-# Copy all files (excluding what's in .dockerignore)
+# Copy all files first (excluding what's in .dockerignore)
 COPY . .
+
+# Overwrite with minimal requirements for Docker
+COPY requirements-docker.txt ./requirements.txt
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
