@@ -1,0 +1,45 @@
+# MongoAssist Docker Ignore Rules
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.env/
+env.bak/
+venv.bak/
+
+# Environment files
+.env
+.env.local
+
+# Git and OS
+.git/
+.gitignore
+.DS_Store
+Thumbs.db
+
+# Test algorithms / Debug scripts not needed for production
+check_*.py
+debug_*.py
+test_*.py
+verify_*.py
+probe_data.py
+seed_mongo.py
+highest_sales_2024.py
+sync_schema.py
+
+# Data/Embeddings caches
+embeddings.pkl
+*.db
+*.sqlite3
+*.log
+
+# Design / Docs
+*.md
+*.drawio
+*.pdf
+.*.swp

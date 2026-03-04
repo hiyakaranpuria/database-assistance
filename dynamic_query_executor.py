@@ -1,10 +1,13 @@
+import os
 import json
 from bson import json_util
 from pymongo import MongoClient
 from metadata_provider import extract_metadata
 
 class DynamicQueryExecutor:
-    def __init__(self, connection_string="mongodb://localhost:27017", db_name="ai_test_db"):
+    def __init__(self, connection_string=None, db_name=None):
+        connection_string = connection_string or os.getenv("MONGO_URI", "mongodb://localhost:27017")
+        db_name = db_name or os.getenv("MONGO_DB", "ai_test_db")
         self.client = MongoClient(connection_string)
         self.db = self.client[db_name]
         self.metadata = extract_metadata()

@@ -4,6 +4,7 @@ Intelligent Query Engine - Enhanced Natural Language Processing for Database Que
 Handles complex business questions with context awareness and smart suggestions
 """
 
+import os
 import re
 import json
 from datetime import datetime, timedelta
@@ -108,8 +109,8 @@ class IntelligentQueryEngine:
         self.metadata = extract_metadata()
         self.business_logic = BusinessLogicEngine()
         self.context = ConversationContext()
-        self.client = MongoClient("mongodb://localhost:27017")
-        self.db = self.client["ai_test_db"]
+        self.client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
+        self.db = self.client[os.getenv("MONGO_DB", "ai_test_db")]
     
     def normalize_question(self, question):
         """Normalize and enhance the question with business intelligence"""

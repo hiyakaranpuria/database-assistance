@@ -1,10 +1,14 @@
+import os
 from pymongo import MongoClient
 from collections import defaultdict
 from datetime import datetime
 
-# Move connection to a config or env later
-client = MongoClient("mongodb://localhost:27017")
-db = client["ai_test_db"]
+# Connection from env vars (Docker injects these)
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB = os.getenv("MONGO_DB", "ai_test_db")
+
+client = MongoClient(MONGO_URI)
+db = client[MONGO_DB]
 
 def infer_type(value):
     if isinstance(value, str): return "string"

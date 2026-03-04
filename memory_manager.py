@@ -1,8 +1,9 @@
+import os
 from datetime import datetime
 from pymongo import MongoClient
 
-client = MongoClient("mongodb://localhost:27017")
-db = client["ai_test_db"]
+client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017"))
+db = client[os.getenv("MONGO_DB", "ai_test_db")]
 history_col = db["chat_history"]
 
 def save_message(role, content, session_id="default"):

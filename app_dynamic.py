@@ -1,6 +1,4 @@
-# app_dynamic.py — MongoDB AI Assistant
-# Premium dark SaaS dashboard — Linear / Atlas / Vercel inspired
-
+import os
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -29,13 +27,15 @@ from theme import (
 )
 
 # ═══════════════════════════════════════════════════════════════
-# DATABASE CONNECTION (unchanged)
+# DATABASE CONNECTION
 # ═══════════════════════════════════════════════════════════════
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_DB = os.getenv("MONGO_DB", "ai_test_db")
 
 @st.cache_resource
 def get_db_connection():
-    client = MongoClient("mongodb://localhost:27017")
-    return client["ai_test_db"]
+    client = MongoClient(MONGO_URI)
+    return client[MONGO_DB]
 
 
 class DataAnalytics:
@@ -174,7 +174,7 @@ if "page" not in st.session_state:
 @st.cache_data(ttl=30)
 def _check_db():
     try:
-        MongoClient("mongodb://localhost:27017", serverSelectionTimeoutMS=1000).admin.command("ping")
+        MongoClient(MONGO_URI, serverSelectionTimeoutMS=1000).admin.command("ping")
         return True
     except Exception:
         return False
@@ -219,7 +219,7 @@ with st.sidebar:
                box-shadow:0 0 6px rgba(34,197,94,0.6);flex-shrink:0;"></div>
           <div>
             <div style="font-size:11px;font-weight:600;color:{TEXT_100};">Connected</div>
-            <div style="font-size:10px;color:{TEXT_300};">ai_test_db</div>
+            <div style="font-size:10px;color:{TEXT_300};">{MONGO_DB}</div>
           </div>
         </div>"""
     else:
@@ -403,8 +403,12 @@ elif page == "dashboard":
 elif page == "explorer":
     st.html(render_page_header("Data Explorer", "Browse raw collections and documents", "🔍"))
 
-    collection_name = st.selectbox("Select Collection",
-                                   ["orders", "customers", "products", "categories", "payments", "reviews"])
+    # Auto-discover collections from the connected database
+    db = get_db_connection()
+    available_collections = sorted(db.list_collection_names())
+    if not available_collections:
+        available_collections = ["(no collections found)"]
+    collection_name = st.selectbox("Select Collection", available_collections)
     try:
         db = get_db_connection()
         docs = list(db[collection_name].find().limit(100))
@@ -781,8 +785,11 @@ elif page == "query":
         query_text = sample_queries.get(selected_sample, "")
         custom_query = st.text_area("Aggregation Pipeline", value=query_text, height=250,
                                     help="Enter a valid JSON array")
-        collection_name = st.selectbox("Collection",
-                                       ["orders", "customers", "products", "categories", "payments", "reviews"])
+        db = get_db_connection()
+        available_collections = sorted(db.list_collection_names())
+        if not available_collections:
+            available_collections = ["(no collections found)"]
+        collection_name = st.selectbox("Collection", available_collections)
         run_btn = st.button("▶ Execute Query", type="primary", use_container_width=True)
 
     with col_right:

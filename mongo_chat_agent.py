@@ -19,13 +19,14 @@ import copy
 class MongoDBConnector:
     """Connect to MongoDB and extract schema"""
     
-    def __init__(self, connection_string='mongodb://localhost:27017'):
-        self.connection_string = connection_string
+    def __init__(self, connection_string=None):
+        self.connection_string = connection_string or os.getenv("MONGO_URI", "mongodb://localhost:27017")
         self.client = None
         self.db = None
     
-    def connect(self, database_name='ai_test_db'):  # ✅ FIX 3: Changed from 'ai-test-db'
+    def connect(self, database_name=None):
         """Connect to MongoDB"""
+        database_name = database_name or os.getenv("MONGO_DB", "ai_test_db")
         try:
             self.client = MongoClient(self.connection_string, serverSelectionTimeoutMS=5000)
             self.client.admin.command('ping')
@@ -230,8 +231,10 @@ class ResponseFormatter:
 class MongoDBChatAgent:
     """Main chat agent - handles user queries end-to-end"""
     
-    def __init__(self, mongodb_uri='mongodb://localhost:27017', db_name='ai_test_db'):
+    def __init__(self, mongodb_uri=None, db_name=None):
         """Initialize the chat agent"""
+        mongodb_uri = mongodb_uri or os.getenv("MONGO_URI", "mongodb://localhost:27017")
+        db_name = db_name or os.getenv("MONGO_DB", "ai_test_db")
         
         # Initialize components
         self.db_connector = MongoDBConnector(mongodb_uri)
