@@ -588,10 +588,12 @@ class InsightRanker:
 # UNIVERSAL INSIGHTS ENGINE — Orchestrator
 # ═══════════════════════════════════════════════════════════════
 
+import os as _os
+
 @st.cache_resource
 def _get_insights_db():
-    client = MongoClient("mongodb://localhost:27017")
-    return client["ai_test_db"]
+    client = MongoClient(_os.getenv("MONGO_URI", "mongodb://localhost:27017"))
+    return client[_os.getenv("MONGO_DB", "ai_test_db")]
 
 
 class UniversalInsightsEngine:

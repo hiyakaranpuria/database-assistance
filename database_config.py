@@ -2,6 +2,10 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
+# Centralized env vars
+_MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+_MONGO_DB = os.getenv("MONGO_DB", "ai_test_db")
+
 @dataclass
 class DatabaseConfig:
     """Configuration for different database types and domains"""
@@ -23,8 +27,8 @@ class DatabaseConfig:
     @classmethod
     def database_config(cls):
         return cls(
-            connection_string="mongodb://localhost:27017",
-            database_name="ai_test_db",
+            connection_string=_MONGO_URI,
+            database_name=_MONGO_DB,
             domain="database",
             amount_fields=["amount", "total", "price", "cost"],
             date_fields=["orderDate", "createdAt", "paymentDate"],
@@ -38,8 +42,8 @@ class DatabaseConfig:
     @classmethod
     def ecommerce_config(cls):
         return cls(
-            connection_string="mongodb://localhost:27017",
-            database_name="ecommerce_db",
+            connection_string=_MONGO_URI,
+            database_name=os.getenv("MONGO_DB", "ecommerce_db"),
             domain="ecommerce",
             amount_fields=["price", "total", "subtotal", "amount"],
             date_fields=["created_at", "updated_at", "order_date"],
@@ -53,8 +57,8 @@ class DatabaseConfig:
     @classmethod
     def finance_config(cls):
         return cls(
-            connection_string="mongodb://localhost:27017",
-            database_name="finance_db",
+            connection_string=_MONGO_URI,
+            database_name=os.getenv("MONGO_DB", "finance_db"),
             domain="finance",
             amount_fields=["amount", "balance", "transaction_amount", "value"],
             date_fields=["transaction_date", "created_at", "settlement_date"],
@@ -81,8 +85,8 @@ class DatabaseConfig:
         else:
             # Generic configuration
             return cls(
-                connection_string=os.getenv("MONGO_CONNECTION", "mongodb://localhost:27017"),
-                database_name=os.getenv("DB_NAME", "ai_test_db"),
+                connection_string=os.getenv("MONGO_CONNECTION", _MONGO_URI),
+                database_name=os.getenv("DB_NAME", _MONGO_DB),
                 domain=domain,
                 amount_fields=["amount", "price", "total", "value"],
                 date_fields=["date", "created_at", "updated_at"],
